@@ -1,0 +1,473 @@
+basePath: /
+definitions:
+  types.Area:
+    properties:
+      admin_level:
+        type: integer
+      area_key:
+        type: string
+      bbox:
+        $ref: '#/definitions/types.BoundingBox'
+      center:
+        $ref: '#/definitions/types.Coordinate'
+      country_code:
+        type: string
+      name:
+        type: string
+      refresh_queued:
+        type: boolean
+      refreshed_at:
+        type: string
+      type:
+        description: country|region|city|locality|neighborhood
+        type: string
+    type: object
+  types.AreaStatus:
+    properties:
+      area_key:
+        type: string
+      last_job:
+        $ref: '#/definitions/types.JobStatus'
+      last_refresh_at:
+        type: string
+      places_count:
+        additionalProperties:
+          type: integer
+        type: object
+      stale:
+        type: boolean
+    type: object
+  types.BootstrapRequest:
+    properties:
+      area_key:
+        type: string
+      cats:
+        items:
+          type: string
+        type: array
+      force:
+        type: boolean
+    required:
+    - area_key
+    type: object
+  types.BootstrapResponse:
+    properties:
+      area_key:
+        type: string
+      job_id:
+        type: string
+      status:
+        type: string
+    type: object
+  types.BoundingBox:
+    properties:
+      east_lon:
+        type: number
+      north_lat:
+        type: number
+      south_lat:
+        type: number
+      west_lon:
+        type: number
+    type: object
+  types.Coordinate:
+    properties:
+      lat:
+        type: number
+      lon:
+        type: number
+    type: object
+  types.JobStatus:
+    properties:
+      duration_ms:
+        type: integer
+      id:
+        type: string
+      status:
+        type: string
+    type: object
+  types.PlaceDetail:
+    properties:
+      address:
+        type: string
+      area_key:
+        type: string
+      category:
+        type: string
+      id:
+        type: string
+      lat:
+        type: number
+      lon:
+        type: number
+      name:
+        type: string
+      popularity:
+        type: number
+      sources:
+        items:
+          $ref: '#/definitions/types.Source'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  types.Source:
+    properties:
+      source:
+        type: string
+      source_id:
+        type: string
+      url:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: A cache-first Places API for location search and discovery
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: Places API
+  version: "1.0"
+paths:
+  /healthcheck:
+    get:
+      consumes:
+      - application/json
+      description: Get the health status of the Places API service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Service is healthy
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - system
+  /v1/admin/areas/bootstrap:
+    post:
+      consumes:
+      - application/json
+      description: Queue background refresh/warm for an area's place cache
+      parameters:
+      - description: Bootstrap request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.BootstrapRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Bootstrap queued successfully
+          schema:
+            $ref: '#/definitions/types.BootstrapResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bootstrap area cache
+      tags:
+      - admin
+  /v1/admin/areas/status:
+    get:
+      consumes:
+      - application/json
+      description: Get refresh status and cache statistics for an area
+      parameters:
+      - description: Area key to check status for
+        in: query
+        name: area
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Area status information
+          schema:
+            $ref: '#/definitions/types.AreaStatus'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get area cache status
+      tags:
+      - admin
+  /v1/areas/children:
+    get:
+      consumes:
+      - application/json
+      description: Get child areas for hierarchical navigation (e.g., cities in a
+        country)
+      parameters:
+      - description: Area key of parent area
+        in: query
+        name: parent
+        required: true
+        type: string
+      - description: Comma-separated child types to return
+        in: query
+        name: types
+        type: string
+      - description: 'Number of results to return (default: 20, max: 50)'
+        in: query
+        name: limit
+        type: integer
+      - description: 'Offset for pagination (default: 0)'
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Children response
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List child areas
+      tags:
+      - areas
+  /v1/areas/resolve:
+    get:
+      consumes:
+      - application/json
+      description: Turn free-text queries like "Rome, Italy" into canonical area keys
+        with geometry
+      parameters:
+      - description: Free-text location query
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: Return multiple candidates instead of best match
+        in: query
+        name: multi
+        type: boolean
+      - description: Queue background refresh for default categories
+        in: query
+        name: bootstrap
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Multiple area results when multi=true
+          schema:
+            items:
+              $ref: '#/definitions/types.Area'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Resolve area from text query
+      tags:
+      - areas
+  /v1/places/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get detailed information for a specific place
+      parameters:
+      - description: Place ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Place details
+          schema:
+            $ref: '#/definitions/types.PlaceDetail'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Place not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get place details
+      tags:
+      - places
+  /v1/places/near:
+    get:
+      consumes:
+      - application/json
+      description: Fast radial search using PostGIS over cached places
+      parameters:
+      - description: Latitude of center point
+        in: query
+        name: lat
+        required: true
+        type: number
+      - description: Longitude of center point
+        in: query
+        name: lon
+        required: true
+        type: number
+      - description: 'Search radius in meters (default: 1200, max: 5000)'
+        in: query
+        name: radius
+        type: integer
+      - description: Comma-separated categories to filter
+        in: query
+        name: cats
+        type: string
+      - description: 'Number of results (default: 40, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: Language preference
+        in: query
+        name: lang
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Nearby places response
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Find nearby places
+      tags:
+      - places
+  /v1/places/search:
+    get:
+      consumes:
+      - application/json
+      description: Typeahead search over cached place names within a given area
+      parameters:
+      - description: Area key to search within
+        in: query
+        name: area
+        required: true
+        type: string
+      - description: Search query text (prefix/fuzzy)
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: Comma-separated categories to filter
+        in: query
+        name: cats
+        type: string
+      - description: 'Number of results (default: 20, max: 50)'
+        in: query
+        name: limit
+        type: integer
+      - description: Language preference
+        in: query
+        name: lang
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Search results
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Search places by name
+      tags:
+      - places
+  /v1/places/top:
+    get:
+      consumes:
+      - application/json
+      description: Return ranked places for an area from cache
+      parameters:
+      - description: Canonical area key
+        in: query
+        name: area
+        required: true
+        type: string
+      - description: Comma-separated categories (attraction,restaurant,cafe,bar,hotel)
+        in: query
+        name: cats
+        type: string
+      - description: 'Number of results (default: 50, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: 'Offset for pagination (default: 0)'
+        in: query
+        name: offset
+        type: integer
+      - description: Language preference
+        in: query
+        name: lang
+        type: string
+      - description: Group results by category
+        in: query
+        name: group_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Top places response
+          headers:
+            X-Cache:
+              description: Cache hit/miss status
+              type: string
+            X-Refresh-Queued:
+              description: Whether refresh was queued
+              type: string
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get top places for area
+      tags:
+      - places
+schemes:
+- http
+- https
+swagger: "2.0"
