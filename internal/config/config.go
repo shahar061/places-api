@@ -30,7 +30,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	// Set default values
-	viper.SetDefault("server.host", "localhost")
+	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
 
 	// Enable reading from environment variables
@@ -43,6 +43,12 @@ func LoadConfig(configPath string) (*Config, error) {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("error reading config file: %w", err)
 		}
+	}
+
+	// Override with standard PORT env var (used by Render, Heroku, etc.)
+	// This must be after reading config file to override file settings
+	if port := viper.GetString("PORT"); port != "" {
+		viper.Set("server.port", port)
 	}
 
 	var config Config
