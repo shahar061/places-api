@@ -15,14 +15,14 @@ A modern, cache-first REST API for location search and places discovery. Built w
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 - Make (for development commands)
 
 ### Installation & Setup
 
 ```bash
 # Clone and install dependencies
-git clone <repo-url>
+git clone https://github.com/shahar061/places_api.git
 cd places_api
 make deps
 
@@ -45,7 +45,7 @@ make run
 
 **Areas (Geocoding & Hierarchy)**
 
-- `GET /v1/areas/resolve` - Convert "Rome, Italy" → canonical area_key
+- `GET /v1/areas/resolve` - Convert "Rome, Lazio, Italy" → canonical area_key
 - `GET /v1/areas/children` - List child areas (cities in country, etc.)
 
 **Places (Search & Discovery)**
@@ -110,14 +110,18 @@ places_api/
 ├── configs/               # Configuration files
 ├── docs/                  # Generated Swagger documentation
 ├── internal/
+│   ├── ai/               # AI planner service
 │   ├── config/           # Configuration management
 │   ├── handlers/         # HTTP request handlers
 │   ├── server/           # HTTP server setup
-│   └── types/            # Shared type definitions
+│   ├── services/         # External service integrations
+│   ├── types/            # Shared type definitions
+│   └── utils/            # Utility functions
+├── .github/workflows/     # CI/CD workflows
 ├── main.go               # Application entry point
 ├── Makefile             # Development automation
-├── API.md               # Detailed API specification
-└── SWAGGER.md           # Swagger usage guide
+├── render.yaml           # Render deployment configuration
+└── README.md            # This file
 ```
 
 ## 🎯 Key Features
@@ -301,6 +305,9 @@ server:
 
 - [API.md](./API.md) - Detailed API specification and design
 - [SWAGGER.md](./SWAGGER.md) - Swagger setup and usage guide
+- [DEPLOYMENT.md](./DEPLOYMENT.md) - CI/CD and deployment instructions
+- [AI_PLANNER.md](./AI_PLANNER.md) - AI travel planning service guide
+- [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) - Database setup instructions
 
 ## 🐛 Troubleshooting
 
@@ -320,7 +327,7 @@ server:
 
 1. Clean and rebuild: `make clean && make build`
 2. Update dependencies: `make update`
-3. Check Go version (requires 1.21+)
+3. Check Go version (requires 1.24+)
 
 ---
 

@@ -70,3 +70,5 @@ coverage.html
 
 # Documentation generation artifacts (if using tools like swagger-codegen)
 # docs/generated/
+
+places_api

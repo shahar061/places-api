@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: places-api
+    runtime: go
+    plan: starter # You can change this to free, starter, standard, pro, etc.
+    region: oregon # You can change this to the region closest to you
+    branch: main
+    rootDir: .
+    buildCommand: |
+      go mod download
+      go install github.com/swaggo/swag/cmd/swag@latest
+      make swagger-gen
+      make build-linux
+    startCommand: ./places_api_unix server
+    healthCheckPath: /healthcheck
+    autoDeploy: false # We'll trigger deploys via CI/CD
+    envVars:
+      - key: GO_ENV
+        value: production
+      - key: GIN_MODE
+        value: release
+      - key: PORT
+        value: "8080"
+      - key: CONFIG_FILE
+        value: ./configs/config.yaml
+      # Add your environment variables here
+      # These should be set in Render dashboard as secrets:
+      - key: SUPABASE_URL
+        sync: false # Set in Render dashboard
+      - key: SUPABASE_KEY
+        sync: false # Set in Render dashboard
+      - key: OPENAI_API_KEY
+        sync: false # Set in Render dashboard
+    disk:
+      name: places-api-disk
+      size: 1GB
+      mountPath: /data

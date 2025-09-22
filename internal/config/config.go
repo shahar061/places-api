@@ -8,13 +8,27 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Database DatabaseConfig `mapstructure:"database"`
+	AI       AIConfig       `mapstructure:"ai"`
 }
 
 // ServerConfig holds server-specific configuration
 type ServerConfig struct {
 	Host string `mapstructure:"host"`
 	Port int    `mapstructure:"port"`
+}
+
+// DatabaseConfig holds database-specific configuration
+type DatabaseConfig struct {
+	SupabaseURL string `mapstructure:"supabase_url"`
+	SupabaseKey string `mapstructure:"supabase_key"`
+}
+
+// AIConfig holds AI service configuration
+type AIConfig struct {
+	OpenRouterAPIKey string `mapstructure:"openrouter_api_key"`
+	Model            string `mapstructure:"model"`
 }
 
 // LoadConfig reads configuration from file and environment variables
@@ -32,10 +46,17 @@ func LoadConfig(configPath string) (*Config, error) {
 	// Set default values
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("ai.model", "anthropic/claude-3.5-sonnet")
 
 	// Enable reading from environment variables
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("PLACES_API")
+
+	// Bind specific environment variables for nested configs
+	viper.BindEnv("database.supabase_url", "PLACES_API_DATABASE_SUPABASE_URL")
+	viper.BindEnv("database.supabase_key", "PLACES_API_DATABASE_SUPABASE_KEY")
+	viper.BindEnv("ai.openrouter_api_key", "PLACES_API_AI_OPENROUTER_API_KEY")
+	viper.BindEnv("ai.model", "PLACES_API_AI_MODEL")
 
 	// Read the config file
 	if err := viper.ReadInConfig(); err != nil {
