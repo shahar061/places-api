@@ -22,12 +22,12 @@ all: deps swagger-gen build
 # Build the binary
 build:
 	@echo "Building $(BINARY_NAME)..."
-	$(GOBUILD) -o $(BINARY_NAME) -v ./...
+	$(GOBUILD) -o $(BINARY_NAME) -v .
 
 # Build for linux
 build-linux:
 	@echo "Building for Linux..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) -v ./...
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) -v .
 
 # Clean build files
 clean:
