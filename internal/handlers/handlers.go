@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
+	"places_api/internal/ai"
 	"places_api/internal/config"
+	"places_api/internal/services"
 	"places_api/internal/types"
 
 	"github.com/gin-gonic/gin"
@@ -13,14 +16,24 @@ import (
 
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
-	config *config.Config
-	// TODO: Add database/cache dependencies (Supabase client)
+	config      *config.Config
+	supabase    *services.SupabaseService
+	nominatim   *services.NominatimService
+	aiPlanner   *ai.AIPlannerService
+	areaService *services.AreaResolutionService
 }
 
 // New creates a new Handler instance
-func New(cfg *config.Config) *Handler {
+func New(cfg *config.Config, supabaseService *services.SupabaseService, aiPlannerService *ai.AIPlannerService) *Handler {
+	nominatim := services.NewNominatimService()
+	areaService := services.NewAreaResolutionService(supabaseService, nominatim, aiPlannerService)
+
 	return &Handler{
-		config: cfg,
+		config:      cfg,
+		supabase:    supabaseService,
+		nominatim:   nominatim,
+		aiPlanner:   aiPlannerService,
+		areaService: areaService,
 	}
 }
 
@@ -43,7 +56,8 @@ func (h *Handler) HandleHealthcheck(c *gin.Context) {
 
 // HandleResolveArea handles GET /v1/areas/resolve
 // @Summary Resolve area from text query
-// @Description Turn free-text queries like "Rome, Italy" into canonical area keys with geometry
+// @Description Turn free-text queries like "Rome, Lazio, Italy" into canonical area keys with geometry.
+// The query is always in the format of "City, Region(State), Country".
 // @Tags areas
 // @Accept json
 // @Produce json
@@ -57,52 +71,50 @@ func (h *Handler) HandleHealthcheck(c *gin.Context) {
 func (h *Handler) HandleResolveArea(c *gin.Context) {
 	query := c.Query("q")
 	if query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "query parameter 'q' is required",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter 'q' is required"})
 		return
 	}
 
 	multi := c.Query("multi") == "true"
 	bootstrap := c.Query("bootstrap") == "true"
 
-	// TODO: Implement cache lookup in Supabase
-	// For now, return a mock response
+	// Use area service if available, otherwise return mock response
+	if h.areaService != nil {
+		result, err := h.areaService.ResolveArea(query, multi, bootstrap)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "location not found"})
+			return
+		}
+
+		c.Header("Cache-Control", fmt.Sprintf("public, max-age=%d", result.CacheAge))
+		c.JSON(http.StatusOK, result.Data)
+		return
+	}
+
+	// Fallback mock response
+	h.handleMockResponse(c, multi, bootstrap)
+}
+
+// handleMockResponse provides a fallback mock response when services are unavailable
+func (h *Handler) handleMockResponse(c *gin.Context, multi bool, bootstrap bool) {
+	mockArea := types.Area{
+		AreaKey:       "it_rome",
+		Name:          "Rome",
+		Type:          "city",
+		CountryCode:   "IT",
+		AdminLevel:    8,
+		Center:        types.Coordinate{Lat: 41.9028, Lon: 12.4964},
+		BBox:          types.BoundingBox{SouthLat: 41.7, NorthLat: 42.0, WestLon: 12.3, EastLon: 12.7},
+		RefreshedAt:   time.Now().Add(-24 * time.Hour),
+		RefreshQueued: bootstrap,
+	}
+
+	c.Header("Cache-Control", "public, max-age=86400")
 
 	if multi {
-		// Return multiple candidates
-		areas := []types.Area{
-			{
-				AreaKey:       "it_rome",
-				Name:          "Rome",
-				Type:          "city",
-				CountryCode:   "IT",
-				AdminLevel:    8,
-				Center:        types.Coordinate{Lat: 41.9028, Lon: 12.4964},
-				BBox:          types.BoundingBox{SouthLat: 41.7, NorthLat: 42.0, WestLon: 12.3, EastLon: 12.7},
-				RefreshedAt:   time.Now().Add(-24 * time.Hour),
-				RefreshQueued: bootstrap,
-			},
-		}
-
-		c.Header("Cache-Control", "public, max-age=86400")
-		c.JSON(http.StatusOK, areas)
+		c.JSON(http.StatusOK, []types.Area{mockArea})
 	} else {
-		// Return single best match
-		area := types.Area{
-			AreaKey:       "it_rome",
-			Name:          "Rome",
-			Type:          "city",
-			CountryCode:   "IT",
-			AdminLevel:    8,
-			Center:        types.Coordinate{Lat: 41.9028, Lon: 12.4964},
-			BBox:          types.BoundingBox{SouthLat: 41.7, NorthLat: 42.0, WestLon: 12.3, EastLon: 12.7},
-			RefreshedAt:   time.Now().Add(-24 * time.Hour),
-			RefreshQueued: bootstrap,
-		}
-
-		c.Header("Cache-Control", "public, max-age=86400")
-		c.JSON(http.StatusOK, area)
+		c.JSON(http.StatusOK, mockArea)
 	}
 }
 
@@ -214,9 +226,29 @@ func (h *Handler) HandleGetTopPlaces(c *gin.Context) {
 		offset = 0
 	}
 
-	// TODO: Implement cache lookup in Supabase
-	// For now, return mock response
+	// Use Supabase service if available, otherwise return mock response
+	if h.supabase != nil {
+		places, err := h.supabase.GetTopPlaces(area, c.DefaultQuery("cats", "attraction,restaurant,cafe,bar,hotel"), limit, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to fetch top places",
+			})
+			return
+		}
 
+		response := gin.H{
+			"area_key": area,
+			"results":  places,
+		}
+
+		c.Header("X-Cache", "hit")
+		c.Header("X-Refresh-Queued", "false")
+		c.Header("Cache-Control", "public, max-age=300")
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
+	// Fall back to mock response when Supabase is not available
 	places := []types.Place{
 		{
 			ID:         "9f9a_c1",
@@ -401,9 +433,20 @@ func (h *Handler) HandleGetPlaceDetails(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement cache lookup
-	// For now, return mock response or 404
+	// Use Supabase service if available, otherwise return mock response
+	if h.supabase != nil {
+		place, err := h.supabase.GetPlaceDetails(id)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "place not found",
+			})
+			return
+		}
+		c.JSON(http.StatusOK, place)
+		return
+	}
 
+	// Fall back to mock response when Supabase is not available
 	if id == "9f9a_c1" {
 		place := types.PlaceDetail{
 			ID:         id,
@@ -504,4 +547,112 @@ func (h *Handler) HandleGetAreaStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+// AI Planning Endpoints
+
+// HandleGeneratePlan handles POST /v1/ai/plan
+// @Summary Generate travel plan
+// @Description Generate an AI-powered travel plan for a specific area
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Param plan body types.PlanRequest true "Plan request"
+// @Success 200 {object} types.PlanResponse "Generated travel plan"
+// @Failure 400 {object} map[string]string "Bad request"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /v1/ai/plan [post]
+func (h *Handler) HandleGeneratePlan(c *gin.Context) {
+	if h.aiPlanner == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "AI planning service not available",
+		})
+		return
+	}
+
+	var req types.PlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid request format",
+		})
+		return
+	}
+
+	// Validate required fields
+	if req.Area == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "area is required",
+		})
+		return
+	}
+	if req.Duration <= 0 || req.Duration > 30 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "duration must be between 1 and 30 days",
+		})
+		return
+	}
+
+	// Generate the plan
+	plan, err := h.aiPlanner.GeneratePlan(&req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to generate travel plan",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, plan)
+}
+
+// HandleTravelChat handles POST /v1/ai/chat
+// @Summary Travel advice chat
+// @Description Get AI-powered travel advice and recommendations
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Param chat body types.ChatRequest true "Chat request"
+// @Success 200 {object} types.ChatResponse "AI travel advice"
+// @Failure 400 {object} map[string]string "Bad request"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /v1/ai/chat [post]
+func (h *Handler) HandleTravelChat(c *gin.Context) {
+	if h.aiPlanner == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "AI planning service not available",
+		})
+		return
+	}
+
+	var req types.ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid request format",
+		})
+		return
+	}
+
+	// Validate required fields
+	if req.Area == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "area is required",
+		})
+		return
+	}
+	if req.Question == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "question is required",
+		})
+		return
+	}
+
+	// Get AI response
+	response, err := h.aiPlanner.ChatTravel(&req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get travel advice",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
 }

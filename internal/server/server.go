@@ -2,9 +2,12 @@ package server
 
 import (
 	"fmt"
+	"log"
 
+	"places_api/internal/ai"
 	"places_api/internal/config"
 	"places_api/internal/handlers"
+	"places_api/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,7 +28,25 @@ func New(cfg *config.Config) *Server {
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 
-	handler := handlers.New(cfg)
+	// Initialize Supabase service
+	supabaseService, err := services.NewSupabaseService(&cfg.Database)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize Supabase service: %v", err)
+		log.Printf("API will run with mock data only. Set PLACES_API_DATABASE_SUPABASE_URL and PLACES_API_DATABASE_SUPABASE_KEY environment variables.")
+	}
+
+	// Initialize location services
+	overpassService := services.NewOverpassService()
+	nominatimService := services.NewNominatimService()
+
+	// Initialize AI Planner service
+	aiPlannerService, err := ai.NewAIPlannerService(&cfg.AI, supabaseService, overpassService, nominatimService)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize AI Planner service: %v", err)
+		log.Printf("AI endpoints will not be available. Set PLACES_API_AI_OPENROUTER_API_KEY environment variable.")
+	}
+
+	handler := handlers.New(cfg, supabaseService, aiPlannerService)
 
 	server := &Server{
 		config:  cfg,

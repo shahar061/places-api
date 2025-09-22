@@ -17,7 +17,7 @@ func (h *Handler) SetupRoutes(router *gin.Engine) {
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Public API v1
-	v1 := router.Group("/v1")
+	v1 := router.Group("api/v1")
 	{
 		// Areas endpoints
 		areas := v1.Group("/areas")
@@ -33,6 +33,13 @@ func (h *Handler) SetupRoutes(router *gin.Engine) {
 			places.GET("/near", h.HandleGetNearbyPlaces)
 			places.GET("/search", h.HandleSearchPlaces)
 			places.GET("/:id", h.HandleGetPlaceDetails)
+		}
+
+		// AI endpoints
+		ai := v1.Group("/ai")
+		{
+			ai.POST("/plan", h.HandleGeneratePlan)
+			ai.POST("/chat", h.HandleTravelChat)
 		}
 
 		// Admin endpoints (protect these with auth in production)
