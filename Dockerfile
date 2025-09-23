@@ -1,6 +1,11 @@
 # Build stage
 FROM golang:1.24.6-alpine AS builder
 
+# Make cross-compiles deterministic & pick up target platform from BuildKit
+ARG TARGETOS
+ARG TARGETARCH
+ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH}
+
 # Install necessary packages
 RUN apk add --no-cache git make
 
@@ -23,7 +28,7 @@ COPY . .
 RUN make swagger-gen
 
 # Build the application
-RUN make build-linux
+RUN make build-docker
 
 # Production stage
 FROM alpine:latest

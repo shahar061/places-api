@@ -24,10 +24,15 @@ build:
 	@echo "Building $(BINARY_NAME)..."
 	$(GOBUILD) -o $(BINARY_NAME) -v .
 
-# Build for linux
+# Build for linux (legacy - specific architecture)
 build-linux:
 	@echo "Building for Linux..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) -v .
+
+# Build for Docker multi-platform (uses GOOS and GOARCH from environment)
+build-docker:
+	@echo "Building for Docker platform (GOOS=$(GOOS), GOARCH=$(GOARCH))..."
+	$(GOBUILD) -ldflags="-w -s" -o $(BINARY_UNIX) -v .
 
 # Clean build files
 clean:
@@ -105,7 +110,8 @@ help:
 	@echo "Available commands:"
 	@echo "  all           - Install deps, generate swagger, and build"
 	@echo "  build         - Build the binary"
-	@echo "  build-linux   - Build for Linux"
+	@echo "  build-linux   - Build for Linux (amd64 only)"
+	@echo "  build-docker  - Build for Docker multi-platform"
 	@echo "  clean         - Clean build files"
 	@echo "  swagger-clean - Clean swagger generated files"
 	@echo "  test          - Run tests"
