@@ -66,7 +66,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 	}
 
-	// Override with standard PORT env var (used by Render, Heroku, etc.)
+	// Override with standard PORT env var (used by hosting platforms)
 	// This must be after reading config file to override file settings
 	if port := viper.GetString("PORT"); port != "" {
 		viper.Set("server.port", port)

@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+AI_PLANNER.md
+DEPLOYMENT.md
+SUPABASE_SETUP.md
+SWAGGER.md
+OVERPASS_TROUBLESHOOTING.md
+
+# Development files
+.vscode
+.idea
+*.log
+
+# Test files
+test/
+*_test.go
+
+# Build artifacts (will be created during build)
+places_api_unix
+places_api_windows.exe
+places_api_macos
+
+# Dependencies (will be downloaded during build)
+vendor/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp

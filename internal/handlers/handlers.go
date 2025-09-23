@@ -248,23 +248,9 @@ func (h *Handler) HandleGetTopPlaces(c *gin.Context) {
 		return
 	}
 
-	// Fall back to mock response when Supabase is not available
-	places := []types.Place{
-		{
-			ID:         "9f9a_c1",
-			Name:       "Colosseum",
-			Category:   "attraction",
-			Lat:        41.8902,
-			Lon:        12.4922,
-			Address:    "Piazza del Colosseo, Rome",
-			Popularity: 98.4,
-			UpdatedAt:  time.Now().Add(-2 * time.Hour),
-		},
-	}
-
 	response := gin.H{
 		"area_key": area,
-		"results":  places,
+		"results":  []types.Place{},
 	}
 
 	c.Header("X-Cache", "miss")
