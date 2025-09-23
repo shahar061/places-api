@@ -120,7 +120,7 @@ places_api/
 ├── .github/workflows/     # CI/CD workflows
 ├── main.go               # Application entry point
 ├── Makefile             # Development automation
-├── render.yaml           # Render deployment configuration
+├── Dockerfile            # Container configuration
 └── README.md            # This file
 ```
 
