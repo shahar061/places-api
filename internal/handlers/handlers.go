@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"places_api/internal/ai"
@@ -209,6 +210,9 @@ func (h *Handler) HandleGetTopPlaces(c *gin.Context) {
 		})
 		return
 	}
+
+	// Transform area key to lowercase
+	area = strings.ToLower(area)
 
 	_ = c.DefaultQuery("cats", "attraction,restaurant,cafe,bar,hotel") // TODO: implement category filtering
 	limitStr := c.DefaultQuery("limit", "50")

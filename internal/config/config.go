@@ -46,7 +46,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	// Set default values
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
-	viper.SetDefault("ai.model", "anthropic/claude-3.5-sonnet")
+	viper.SetDefault("ai.model", "x-ai/grok-4-fast:free")
 
 	// Enable reading from environment variables
 	viper.AutomaticEnv()
