@@ -3,20 +3,26 @@ package server
 import (
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"places_api/internal/ai"
 	"places_api/internal/config"
 	"places_api/internal/handlers"
 	"places_api/internal/services"
+	"places_api/internal/worker"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Server represents the HTTP server
 type Server struct {
-	config  *config.Config
-	router  *gin.Engine
-	handler *handlers.Handler
+	config      *config.Config
+	router      *gin.Engine
+	handler     *handlers.Handler
+	natsService *services.NATSService
+	worker      *worker.Worker
 }
 
 // New creates a new server instance
@@ -35,23 +41,36 @@ func New(cfg *config.Config) *Server {
 		log.Printf("API will run with mock data only. Set PLACES_API_DATABASE_SUPABASE_URL and PLACES_API_DATABASE_SUPABASE_KEY environment variables.")
 	}
 
-	// Initialize location services
-	overpassService := services.NewOverpassService()
-	nominatimService := services.NewNominatimService()
+	// Initialize AI service
+	aiService := ai.NewService(cfg)
 
-	// Initialize AI Planner service
-	aiPlannerService, err := ai.NewAIPlannerService(&cfg.AI, supabaseService, overpassService, nominatimService)
-	if err != nil {
-		log.Printf("Warning: Failed to initialize AI Planner service: %v", err)
-		log.Printf("AI endpoints will not be available. Set PLACES_API_AI_OPENROUTER_API_KEY environment variable.")
+	// Initialize Photon service
+	photonService := services.NewPhotonService()
+
+	// Initialize NATS service
+	var natsService *services.NATSService
+	var jobWorker *worker.Worker
+
+	if cfg.NATS.URL != "" {
+		natsService, err = services.NewNATSService(&cfg.NATS)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize NATS service: %v", err)
+			log.Printf("Background job processing will be disabled. Set PLACES_API_NATS_URL environment variable.")
+		} else {
+			// Initialize job service and worker
+			jobService := services.NewJobService(supabaseService, natsService)
+			jobWorker = worker.NewWorker(jobService, natsService, supabaseService, aiService, photonService)
+		}
 	}
 
-	handler := handlers.New(cfg, supabaseService, aiPlannerService)
+	handler := handlers.New(cfg, supabaseService, natsService)
 
 	server := &Server{
-		config:  cfg,
-		router:  router,
-		handler: handler,
+		config:      cfg,
+		router:      router,
+		handler:     handler,
+		natsService: natsService,
+		worker:      jobWorker,
 	}
 
 	server.setupRoutes()
@@ -63,9 +82,49 @@ func (s *Server) setupRoutes() {
 	s.handler.SetupRoutes(s.router)
 }
 
-// Start starts the HTTP server
+// Start starts the HTTP server and background worker
 func (s *Server) Start() error {
+	// Start background worker if available
+	if s.worker != nil {
+		err := s.worker.Start()
+		if err != nil {
+			log.Printf("Warning: Failed to start background worker: %v", err)
+		}
+	}
+
+	// Setup graceful shutdown
+	go s.setupGracefulShutdown()
+
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
-	fmt.Printf("Starting server on %s\n", addr)
+	fmt.Printf("Starting Places API server on %s\n", addr)
+
+	if s.natsService != nil {
+		fmt.Printf("NATS JetStream enabled for background job processing\n")
+	} else {
+		fmt.Printf("NATS disabled - background job processing unavailable\n")
+	}
+
 	return s.router.Run(addr)
+}
+
+// setupGracefulShutdown handles graceful shutdown of services
+func (s *Server) setupGracefulShutdown() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	<-c
+	fmt.Printf("\nShutting down gracefully...\n")
+
+	// Stop worker
+	if s.worker != nil {
+		s.worker.Stop()
+	}
+
+	// Close NATS connection
+	if s.natsService != nil {
+		s.natsService.Close()
+	}
+
+	fmt.Printf("Shutdown complete\n")
+	os.Exit(0)
 }

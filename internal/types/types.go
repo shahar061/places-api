@@ -127,27 +127,6 @@ type Place struct {
 	Description string    `json:"description,omitempty"`
 }
 
-// PlaceDetail represents detailed place information including sources
-type PlaceDetail struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Category   string    `json:"category"`
-	Lat        float64   `json:"lat"`
-	Lon        float64   `json:"lon"`
-	Address    string    `json:"address,omitempty"`
-	AreaKey    string    `json:"area_key"`
-	Popularity float64   `json:"popularity"`
-	Sources    []Source  `json:"sources"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
-
-// Source represents a data source for a place
-type Source struct {
-	Source   string `json:"source"`
-	SourceID string `json:"source_id"`
-	URL      string `json:"url"`
-}
-
 // Area represents a geographical area with metadata
 type Area struct {
 	AreaKey       string      `json:"area_key"`
@@ -262,117 +241,31 @@ func FromFlat(flat *AreaFlat) *Area {
 	return area
 }
 
-// ChildArea represents a child area for hierarchical navigation
-type ChildArea struct {
-	AreaKey string      `json:"area_key"`
-	Name    string      `json:"name"`
-	Type    string      `json:"type"`
-	Center  Coordinate  `json:"center"`
-	BBox    BoundingBox `json:"bbox"`
-	Teaser  []Place     `json:"teaser"`
-}
-
-// Admin API Types
-
-// BootstrapRequest represents a request to bootstrap/refresh an area
-type BootstrapRequest struct {
-	AreaKey string   `json:"area_key" binding:"required"`
-	Cats    []string `json:"cats"`
-	Force   bool     `json:"force,omitempty"`
-}
-
-// BootstrapResponse represents the response from a bootstrap request
-type BootstrapResponse struct {
-	Status  string `json:"status"`
-	AreaKey string `json:"area_key"`
-	JobID   string `json:"job_id"`
-}
-
-// AreaStatus represents the status of an area's cache and refresh state
-type AreaStatus struct {
-	AreaKey       string         `json:"area_key"`
-	LastRefreshAt *time.Time     `json:"last_refresh_at"`
-	PlacesCount   map[string]int `json:"places_count"`
-	Stale         bool           `json:"stale"`
-	LastJob       *JobStatus     `json:"last_job"`
-}
-
-// JobStatus represents the status of a background job
-type JobStatus struct {
-	ID         string `json:"id"`
-	Status     string `json:"status"`
-	DurationMS int    `json:"duration_ms"`
-}
-
 type QueryLocation struct {
 	City    string `json:"city"`
 	Region  string `json:"region"`
 	Country string `json:"country"`
 }
 
-// AI Planning Types
-
-// PlanRequest represents a request to generate a travel plan
-type PlanRequest struct {
-	Area        string   `json:"area" binding:"required"`     // Area key or description
-	Duration    int      `json:"duration" binding:"required"` // Duration in days
-	Interests   []string `json:"interests,omitempty"`         // User interests/preferences
-	Budget      string   `json:"budget,omitempty"`            // Budget level (low, medium, high)
-	TravelStyle string   `json:"travel_style,omitempty"`      // Travel style (adventure, relaxation, culture, etc.)
-}
-
-// PlanResponse represents the AI-generated travel plan
-type PlanResponse struct {
-	ID          string    `json:"id"`
-	Area        string    `json:"area"`
-	Duration    int       `json:"duration"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Days        []PlanDay `json:"days"`
-	Tips        []string  `json:"tips,omitempty"`
-	GeneratedAt time.Time `json:"generated_at"`
-}
-
-// PlanDay represents a single day in the travel plan
-type PlanDay struct {
-	Day         int            `json:"day"`
-	Title       string         `json:"title"`
-	Description string         `json:"description"`
-	Activities  []PlanActivity `json:"activities"`
-}
-
-// PlanActivity represents a single activity in the travel plan
-type PlanActivity struct {
-	Time        string `json:"time"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Location    string `json:"location,omitempty"`
-	Category    string `json:"category,omitempty"`
-	Duration    string `json:"duration,omitempty"`
-	Cost        string `json:"cost,omitempty"`
-}
-
-// ChatRequest represents a chat request for travel advice
-type ChatRequest struct {
-	Area     string `json:"area" binding:"required"`     // Area context
-	Question string `json:"question" binding:"required"` // User question
-	Context  string `json:"context,omitempty"`           // Additional context
-}
-
-// ChatResponse represents the AI chat response
-type ChatResponse struct {
-	Answer      string    `json:"answer"`
-	Suggestions []string  `json:"suggestions,omitempty"`
-	GeneratedAt time.Time `json:"generated_at"`
-}
-
 // AttractionItem represents a single attraction/place item from AI response
 type AttractionItem struct {
+	ID               string          `json:"id"`
 	Type             string          `json:"type"`
 	Name             string          `json:"name"`
 	ShortDescription string          `json:"short_description"`
 	Latitude         FlexibleFloat64 `json:"latitude"`
 	Longitude        FlexibleFloat64 `json:"longitude"`
+	Street           string          `json:"street"`
+	Address          string          `json:"address"`
+	HouseNumber      string          `json:"house_number"`
+	OsmData          OsmData         `json:"osm_data"`
+}
+
+type OsmData struct {
+	OsmType  string `json:"osm_type"`
+	OsmID    int    `json:"osm_id"`
+	OsmKey   string `json:"osm_key"`
+	OsmValue string `json:"osm_value"`
 }
 
 // AttractionResponse represents the structure of AI response for attractions
@@ -382,4 +275,147 @@ type AttractionResponse struct {
 	Cafes       []AttractionItem `json:"cafes"`
 	Bars        []AttractionItem `json:"bars"`
 	Hotels      []AttractionItem `json:"hotels"`
+}
+
+// Job-related types
+type JobStatus string
+
+const (
+	JobStatusPending   JobStatus = "pending"
+	JobStatusRunning   JobStatus = "running"
+	JobStatusCompleted JobStatus = "completed"
+	JobStatusFailed    JobStatus = "failed"
+)
+
+type JobType string
+
+const (
+	JobTypeFetchAttractions JobType = "fetch_attractions"
+)
+
+type Job struct {
+	ID           string                 `json:"id"`
+	AreaKey      string                 `json:"area_key"`
+	JobType      JobType                `json:"job_type"`
+	Status       JobStatus              `json:"status"`
+	CreatedAt    time.Time              `json:"created_at"`
+	StartedAt    *time.Time             `json:"started_at,omitempty"`
+	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
+	ErrorMessage *string                `json:"error_message,omitempty"`
+	Progress     map[string]interface{} `json:"progress,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type JobProgress struct {
+	Percentage int    `json:"percentage"`
+	Message    string `json:"message"`
+	Step       string `json:"step"`
+	Total      int    `json:"total,omitempty"`
+	Current    int    `json:"current,omitempty"`
+}
+
+type AreaRefresh struct {
+	ID                 string     `json:"id"`
+	AreaKey            string     `json:"area_key"`
+	LastRefreshedAt    *time.Time `json:"last_refreshed_at,omitempty"`
+	RefreshRequestedAt time.Time  `json:"refresh_requested_at"`
+	DataExpiresAt      *time.Time `json:"data_expires_at,omitempty"`
+	Categories         []string   `json:"categories"`
+	PlaceCount         int        `json:"place_count"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+type FetchAttractionsMessage struct {
+	JobID       string    `json:"job_id"`
+	Area        Area      `json:"area"`
+	Categories  []string  `json:"categories"`
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+type JobStatusMessage struct {
+	JobID     string                 `json:"job_id"`
+	AreaKey   string                 `json:"area_key"`
+	Status    JobStatus              `json:"status"`
+	Progress  *JobProgress           `json:"progress,omitempty"`
+	Error     *string                `json:"error,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	UpdatedAt time.Time              `json:"updated_at"`
+}
+
+type ResolveAreaResponse struct {
+	Area          Area          `json:"area"`
+	JobStatus     *JobInfo      `json:"job_status,omitempty"`
+	DataFreshness DataFreshness `json:"data_freshness"`
+}
+
+type JobInfo struct {
+	JobID       string       `json:"job_id"`
+	Status      JobStatus    `json:"status"`
+	Progress    *JobProgress `json:"progress,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	StartedAt   *time.Time   `json:"started_at,omitempty"`
+	CompletedAt *time.Time   `json:"completed_at,omitempty"`
+	StatusURL   string       `json:"status_url"`
+}
+
+type DataFreshness struct {
+	LastRefreshed *time.Time `json:"last_refreshed,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	IsStale       bool       `json:"is_stale"`
+	PlaceCount    int        `json:"place_count"`
+}
+
+// NATS Configuration
+const (
+	JobsStreamName           = "JOBS"
+	SubjectFetchAttractions  = "jobs.fetch_attractions"
+	SubjectJobStatus         = "jobs.status"
+	ConsumerFetchAttractions = "fetch-attractions-worker"
+)
+
+// Helper methods
+func (ar *AreaRefresh) IsExpired() bool {
+	if ar.DataExpiresAt == nil {
+		return true
+	}
+	return time.Now().After(*ar.DataExpiresAt)
+}
+
+func (ar *AreaRefresh) NeedsRefresh() bool {
+	return ar.IsExpired() || ar.LastRefreshedAt == nil
+}
+
+func (j *Job) SetProgress(percentage int, message, step string) {
+	if j.Progress == nil {
+		j.Progress = make(map[string]interface{})
+	}
+	j.Progress["percentage"] = percentage
+	j.Progress["message"] = message
+	j.Progress["step"] = step
+}
+
+func (j *Job) GetProgress() *JobProgress {
+	if j.Progress == nil {
+		return nil
+	}
+
+	progress := &JobProgress{}
+	if p, ok := j.Progress["percentage"].(float64); ok {
+		progress.Percentage = int(p)
+	}
+	if m, ok := j.Progress["message"].(string); ok {
+		progress.Message = m
+	}
+	if s, ok := j.Progress["step"].(string); ok {
+		progress.Step = s
+	}
+	if t, ok := j.Progress["total"].(float64); ok {
+		progress.Total = int(t)
+	}
+	if c, ok := j.Progress["current"].(float64); ok {
+		progress.Current = int(c)
+	}
+
+	return progress
 }

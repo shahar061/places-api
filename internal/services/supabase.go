@@ -1,9 +1,11 @@
 package services
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"places_api/internal/config"
 	"places_api/internal/types"
 	"strings"
@@ -12,9 +14,32 @@ import (
 	"github.com/supabase-community/postgrest-go"
 )
 
+// Configure HTTP transport with environment-aware TLS settings
+func init() {
+	// Check if we're in development mode
+	isDevelopment := os.Getenv("GO_ENV") == "development" ||
+		os.Getenv("GIN_MODE") == "debug" ||
+		os.Getenv("PLACES_API_SKIP_TLS_VERIFY") == "true"
+
+	http.DefaultTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: isDevelopment, // Only skip in development
+			MinVersion:         tls.VersionTLS12,
+		},
+	}
+
+	if isDevelopment {
+		fmt.Printf("⚠️  TLS certificate verification DISABLED (development mode)\n")
+	} else {
+		fmt.Printf("🔒 TLS certificate verification ENABLED (production mode)\n")
+	}
+}
+
 const (
-	areasTable  = "areas"
-	placesTable = "places"
+	areasTable         = "areas"
+	placesTable        = "places"
+	jobsTable          = "jobs"
+	areaRefreshesTable = "area_refreshes"
 )
 
 // SupabaseService handles all interactions with Supabase
@@ -40,6 +65,21 @@ func NewSupabaseService(cfg *config.DatabaseConfig) (*SupabaseService, error) {
 
 	fmt.Printf("Final URL: %s\n", supabaseURL)
 
+	// Create HTTP client with environment-aware TLS configuration
+	isDevelopment := os.Getenv("GO_ENV") == "development" ||
+		os.Getenv("GIN_MODE") == "debug" ||
+		os.Getenv("PLACES_API_SKIP_TLS_VERIFY") == "true"
+
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: isDevelopment, // Only skip in development
+				MinVersion:         tls.VersionTLS12,
+			},
+		},
+	}
+
 	client := postgrest.NewClient(supabaseURL, "", map[string]string{
 		"apikey":        cfg.SupabaseKey,
 		"Authorization": "Bearer " + cfg.SupabaseKey,
@@ -49,7 +89,7 @@ func NewSupabaseService(cfg *config.DatabaseConfig) (*SupabaseService, error) {
 		client:     client,
 		baseURL:    supabaseURL,
 		apiKey:     cfg.SupabaseKey,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: httpClient,
 	}, nil
 }
 
@@ -88,16 +128,6 @@ func (s *SupabaseService) ResolveArea(query string, multi bool) (interface{}, er
 		area := types.FromFlat(&flatAreas[0])
 		return *area, nil
 	}
-}
-
-// GetAreaChildren retrieves child areas for hierarchical navigation
-func (s *SupabaseService) GetAreaChildren(parent string, categoryTypes string, limit, offset int) (map[string]interface{}, error) {
-	// TODO: Implement child area lookup
-	// This would query areas table with parent relationships
-	return map[string]interface{}{
-		"parent":   parent,
-		"children": []interface{}{},
-	}, nil
 }
 
 // GetTopPlaces retrieves ranked places for an area from cache
@@ -208,36 +238,8 @@ func (s *SupabaseService) GetTopPlaces(areaKey string, categories string, limit,
 		places = append(places, place)
 	}
 
-	fmt.Printf("✓ Retrieved %d places for area %s\n", len(places), areaKey)
+	fmt.Printf("Retrieved %d places for area %s\n", len(places), areaKey)
 	return places, nil
-}
-
-// GetNearbyPlaces performs radial search using PostGIS
-func (s *SupabaseService) GetNearbyPlaces(lat, lon float64, radius, limit int, categories string) ([]types.Place, error) {
-	// TODO: Implement PostGIS radial search
-	// This would use ST_DWithin or similar PostGIS functions
-	return []types.Place{}, nil
-}
-
-// SearchPlaces performs typeahead search over cached place names
-func (s *SupabaseService) SearchPlaces(areaKey, query, categories string, limit int) ([]types.Place, error) {
-	// TODO: Implement fuzzy/prefix search over place names
-	// This would use PostgreSQL full-text search or trigram matching
-	return []types.Place{}, nil
-}
-
-// GetPlaceDetails retrieves detailed information for a specific place
-func (s *SupabaseService) GetPlaceDetails(id string) (*types.PlaceDetail, error) {
-	// TODO: Implement place detail lookup
-	// This would query the places table with detailed information
-	return nil, fmt.Errorf("place not found")
-}
-
-// GetAreaStatus retrieves cache status and statistics for an area
-func (s *SupabaseService) GetAreaStatus(areaKey string) (*types.AreaStatus, error) {
-	// TODO: Implement area status lookup
-	// This would query area cache status and job information
-	return nil, nil
 }
 
 // SaveArea saves an area to the database
@@ -254,42 +256,328 @@ func (s *SupabaseService) SaveArea(area *types.Area) error {
 	return nil
 }
 
-// SavePlaces saves places to the database with upsert functionality
-func (s *SupabaseService) SavePlaces(places []types.Place, areaKey string) error {
-	if len(places) == 0 {
+// SaveAttractions saves attractions to the places table
+func (s *SupabaseService) SaveAttractions(attractions *types.AttractionResponse, areaKey string) error {
+	if attractions == nil {
 		return nil
 	}
 
-	// Convert places to database format and add area_key
-	placesData := make([]map[string]interface{}, len(places))
-	for i, place := range places {
+	// Combine all attraction types into a single slice
+	allAttractions := make([]types.AttractionItem, 0)
+	allAttractions = append(allAttractions, attractions.Attractions...)
+	allAttractions = append(allAttractions, attractions.Restaurants...)
+	allAttractions = append(allAttractions, attractions.Cafes...)
+	allAttractions = append(allAttractions, attractions.Bars...)
+	allAttractions = append(allAttractions, attractions.Hotels...)
+
+	if len(allAttractions) == 0 {
+		return nil
+	}
+
+	// Convert attractions to database format
+	placesData := make([]map[string]interface{}, len(allAttractions))
+	for i, attraction := range allAttractions {
 		placesData[i] = map[string]interface{}{
-			"id":          place.ID,
-			"name":        place.Name,
-			"category":    place.Category,
-			"lat":         place.Lat,
-			"lon":         place.Lon,
-			"address":     place.Address,
+			"id":          attraction.ID,
+			"name":        attraction.Name,
+			"category":    attraction.Type,
+			"description": attraction.ShortDescription,
+			"lat":         float64(attraction.Latitude),
+			"lon":         float64(attraction.Longitude),
+			"address":     attraction.Address,
 			"area_key":    areaKey,
-			"popularity":  place.Popularity,
-			"distance_m":  nil, // Distance is only relevant for nearby searches
-			"description": place.Description,
+			"osm_type":    attraction.OsmData.OsmType,
+			"osm_id":      attraction.OsmData.OsmID,
+			"osm_key":     attraction.OsmData.OsmKey,
+			"osm_value":   attraction.OsmData.OsmValue,
 			"updated_at":  time.Now(),
 		}
 	}
 
-	// Upsert places to database
+	// Upsert attractions to database
 	_, _, err := s.client.From(placesTable).Upsert(placesData, "", "", "").Execute()
 	if err != nil {
-		return fmt.Errorf("failed to save places to database: %v", err)
+		return fmt.Errorf("failed to save attractions to database: %v", err)
+	}
+
+	fmt.Printf("Successfully saved %d attractions to database for area %s\n", len(allAttractions), areaKey)
+	return nil
+}
+
+// Job-related methods
+
+// CreateJob creates a new job in the database
+func (s *SupabaseService) CreateJob(job *types.Job) error {
+	// Generate UUID for the job if not set
+	if job.ID == "" {
+		// Let Supabase generate the UUID
+		job.ID = ""
+	}
+
+	jobData := map[string]interface{}{
+		"area_key":   job.AreaKey,
+		"job_type":   string(job.JobType),
+		"status":     string(job.Status),
+		"created_at": job.CreatedAt,
+		"progress":   job.Progress,
+		"metadata":   job.Metadata,
+	}
+
+	response, _, err := s.client.From(jobsTable).Insert(jobData, false, "", "", "").Execute()
+	if err != nil {
+		return fmt.Errorf("failed to create job: %v", err)
+	}
+
+	// Parse response to get the generated ID
+	var jobs []map[string]interface{}
+	if err := json.Unmarshal(response, &jobs); err != nil {
+		return fmt.Errorf("failed to parse job creation response: %v", err)
+	}
+
+	if len(jobs) > 0 {
+		if id, ok := jobs[0]["id"].(string); ok {
+			job.ID = id
+		}
 	}
 
 	return nil
 }
 
-// BootstrapArea queues background refresh for an area
-func (s *SupabaseService) BootstrapArea(areaKey string, categories []string) (string, error) {
-	// TODO: Implement job queueing for area bootstrap
-	// This would insert into a jobs table or queue system
-	return "", nil
+// GetJob retrieves a job by ID
+func (s *SupabaseService) GetJob(jobID string) (*types.Job, error) {
+	response, _, err := s.client.From(jobsTable).Select("*", "", false).Eq("id", jobID).Execute()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get job: %v", err)
+	}
+
+	var jobs []map[string]interface{}
+	if err := json.Unmarshal(response, &jobs); err != nil {
+		return nil, fmt.Errorf("failed to parse job response: %v", err)
+	}
+
+	if len(jobs) == 0 {
+		return nil, fmt.Errorf("job not found")
+	}
+
+	return s.mapToJob(jobs[0])
+}
+
+// GetLatestJobForArea retrieves the most recent job for an area
+func (s *SupabaseService) GetLatestJobForArea(areaKey string) (*types.Job, error) {
+	response, _, err := s.client.From(jobsTable).
+		Select("*", "", false).
+		Eq("area_key", areaKey).
+		Order("created_at", &postgrest.OrderOpts{Ascending: false}).
+		Limit(1, "").
+		Execute()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest job for area: %v", err)
+	}
+
+	var jobs []map[string]interface{}
+	if err := json.Unmarshal(response, &jobs); err != nil {
+		return nil, fmt.Errorf("failed to parse job response: %v", err)
+	}
+
+	if len(jobs) == 0 {
+		return nil, fmt.Errorf("no jobs found for area")
+	}
+
+	return s.mapToJob(jobs[0])
+}
+
+// UpdateJobStatus updates a job's status and progress
+func (s *SupabaseService) UpdateJobStatus(jobID string, status types.JobStatus, progress map[string]interface{}, errorMessage *string) error {
+	updateData := map[string]interface{}{
+		"status":   string(status),
+		"progress": progress,
+	}
+
+	if status == types.JobStatusRunning && progress == nil {
+		updateData["started_at"] = time.Now()
+	}
+
+	if status == types.JobStatusCompleted || status == types.JobStatusFailed {
+		updateData["completed_at"] = time.Now()
+	}
+
+	if errorMessage != nil {
+		updateData["error_message"] = *errorMessage
+	}
+
+	_, _, err := s.client.From(jobsTable).Update(updateData, "", "").Eq("id", jobID).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to update job status: %v", err)
+	}
+
+	return nil
+}
+
+// mapToJob converts a database row to a Job struct
+func (s *SupabaseService) mapToJob(data map[string]interface{}) (*types.Job, error) {
+	job := &types.Job{}
+
+	if id, ok := data["id"].(string); ok {
+		job.ID = id
+	}
+	if areaKey, ok := data["area_key"].(string); ok {
+		job.AreaKey = areaKey
+	}
+	if jobType, ok := data["job_type"].(string); ok {
+		job.JobType = types.JobType(jobType)
+	}
+	if status, ok := data["status"].(string); ok {
+		job.Status = types.JobStatus(status)
+	}
+
+	// Parse timestamps
+	if createdAtStr, ok := data["created_at"].(string); ok {
+		if createdAt, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			job.CreatedAt = createdAt
+		}
+	}
+	if startedAtStr, ok := data["started_at"].(string); ok && startedAtStr != "" {
+		if startedAt, err := time.Parse(time.RFC3339, startedAtStr); err == nil {
+			job.StartedAt = &startedAt
+		}
+	}
+	if completedAtStr, ok := data["completed_at"].(string); ok && completedAtStr != "" {
+		if completedAt, err := time.Parse(time.RFC3339, completedAtStr); err == nil {
+			job.CompletedAt = &completedAt
+		}
+	}
+
+	if errorMsg, ok := data["error_message"].(string); ok && errorMsg != "" {
+		job.ErrorMessage = &errorMsg
+	}
+
+	if progress, ok := data["progress"].(map[string]interface{}); ok {
+		job.Progress = progress
+	}
+	if metadata, ok := data["metadata"].(map[string]interface{}); ok {
+		job.Metadata = metadata
+	}
+
+	return job, nil
+}
+
+// Area refresh methods
+
+// GetAreaRefresh retrieves area refresh information
+func (s *SupabaseService) GetAreaRefresh(areaKey string) (*types.AreaRefresh, error) {
+	response, _, err := s.client.From(areaRefreshesTable).Select("*", "", false).Eq("area_key", areaKey).Execute()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get area refresh: %v", err)
+	}
+
+	var refreshes []map[string]interface{}
+	if err := json.Unmarshal(response, &refreshes); err != nil {
+		return nil, fmt.Errorf("failed to parse area refresh response: %v", err)
+	}
+
+	if len(refreshes) == 0 {
+		return nil, fmt.Errorf("area refresh not found")
+	}
+
+	return s.mapToAreaRefresh(refreshes[0])
+}
+
+// UpsertAreaRefresh creates or updates area refresh information
+func (s *SupabaseService) UpsertAreaRefresh(refresh *types.AreaRefresh) error {
+	refreshData := map[string]interface{}{
+		"area_key":             refresh.AreaKey,
+		"refresh_requested_at": refresh.RefreshRequestedAt,
+		"categories":           refresh.Categories,
+		"place_count":          refresh.PlaceCount,
+		"updated_at":           time.Now(),
+	}
+
+	if refresh.LastRefreshedAt != nil {
+		refreshData["last_refreshed_at"] = *refresh.LastRefreshedAt
+	}
+	if refresh.DataExpiresAt != nil {
+		refreshData["data_expires_at"] = *refresh.DataExpiresAt
+	}
+
+	_, _, err := s.client.From(areaRefreshesTable).Upsert(refreshData, "", "", "").Execute()
+	if err != nil {
+		return fmt.Errorf("failed to upsert area refresh: %v", err)
+	}
+
+	return nil
+}
+
+// UpdateAreaRefreshCompleted marks an area refresh as completed
+func (s *SupabaseService) UpdateAreaRefreshCompleted(areaKey string, placeCount int) error {
+	now := time.Now()
+	expiresAt := now.Add(30 * 24 * time.Hour) // 30 days TTL
+
+	updateData := map[string]interface{}{
+		"last_refreshed_at": now,
+		"data_expires_at":   expiresAt,
+		"place_count":       placeCount,
+		"updated_at":        now,
+	}
+
+	_, _, err := s.client.From(areaRefreshesTable).Update(updateData, "", "").Eq("area_key", areaKey).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to update area refresh completion: %v", err)
+	}
+
+	return nil
+}
+
+// mapToAreaRefresh converts a database row to an AreaRefresh struct
+func (s *SupabaseService) mapToAreaRefresh(data map[string]interface{}) (*types.AreaRefresh, error) {
+	refresh := &types.AreaRefresh{}
+
+	if id, ok := data["id"].(string); ok {
+		refresh.ID = id
+	}
+	if areaKey, ok := data["area_key"].(string); ok {
+		refresh.AreaKey = areaKey
+	}
+	if placeCount, ok := data["place_count"].(float64); ok {
+		refresh.PlaceCount = int(placeCount)
+	}
+
+	// Parse categories array
+	if categoriesData, ok := data["categories"].([]interface{}); ok {
+		categories := make([]string, len(categoriesData))
+		for i, cat := range categoriesData {
+			if catStr, ok := cat.(string); ok {
+				categories[i] = catStr
+			}
+		}
+		refresh.Categories = categories
+	}
+
+	// Parse timestamps
+	if lastRefreshedStr, ok := data["last_refreshed_at"].(string); ok && lastRefreshedStr != "" {
+		if lastRefreshed, err := time.Parse(time.RFC3339, lastRefreshedStr); err == nil {
+			refresh.LastRefreshedAt = &lastRefreshed
+		}
+	}
+	if refreshRequestedStr, ok := data["refresh_requested_at"].(string); ok {
+		if refreshRequested, err := time.Parse(time.RFC3339, refreshRequestedStr); err == nil {
+			refresh.RefreshRequestedAt = refreshRequested
+		}
+	}
+	if dataExpiresStr, ok := data["data_expires_at"].(string); ok && dataExpiresStr != "" {
+		if dataExpires, err := time.Parse(time.RFC3339, dataExpiresStr); err == nil {
+			refresh.DataExpiresAt = &dataExpires
+		}
+	}
+	if createdAtStr, ok := data["created_at"].(string); ok {
+		if createdAt, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			refresh.CreatedAt = createdAt
+		}
+	}
+	if updatedAtStr, ok := data["updated_at"].(string); ok {
+		if updatedAt, err := time.Parse(time.RFC3339, updatedAtStr); err == nil {
+			refresh.UpdatedAt = updatedAt
+		}
+	}
+
+	return refresh, nil
 }

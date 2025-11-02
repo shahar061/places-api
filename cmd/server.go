@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"places_api/internal/config"
+	"places_api/internal/logger"
 	"places_api/internal/server"
 
 	"github.com/spf13/cobra"
@@ -29,9 +30,19 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Initialize logger
+	logger.InitGlobal(logger.LogConfig{
+		Level:      cfg.Logging.Level,
+		Format:     cfg.Logging.Format,
+		TimeFormat: cfg.Logging.TimeFormat,
+	})
+
+	logger.Info().Msg("Starting Places API server")
+	logger.Info().Str("host", cfg.Server.Host).Int("port", cfg.Server.Port).Msg("Server configuration")
+
 	// Create and start server
 	srv := server.New(cfg)
 	if err := srv.Start(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		logger.Fatal().Err(err).Msg("Failed to start server")
 	}
 }

@@ -2,7 +2,6 @@ package services
 
 import (
 	"fmt"
-	"places_api/internal/ai"
 	"places_api/internal/types"
 	"places_api/internal/utils"
 )
@@ -11,15 +10,13 @@ import (
 type AreaResolutionService struct {
 	supabase  *SupabaseService
 	nominatim *NominatimService
-	aiPlanner *ai.AIPlannerService
 }
 
 // NewAreaResolutionService creates a new area resolution service
-func NewAreaResolutionService(supabase *SupabaseService, nominatim *NominatimService, aiPlanner *ai.AIPlannerService) *AreaResolutionService {
+func NewAreaResolutionService(supabase *SupabaseService, nominatim *NominatimService) *AreaResolutionService {
 	return &AreaResolutionService{
 		supabase:  supabase,
 		nominatim: nominatim,
-		aiPlanner: aiPlanner,
 	}
 }
 
@@ -43,46 +40,34 @@ func (a *AreaResolutionService) ResolveArea(originalQuery string, multi bool, bo
 
 		// Check if we got valid results
 		if a.hasValidResults(result) {
-			queryLocation := utils.BuildQueryLocation(originalQuery)
-
-			// Handle bootstrap request if needed
-			if bootstrap && a.aiPlanner != nil {
-				// Extract area key from result
-				areaKey := a.extractAreaKey(result)
-				go a.aiPlanner.GetAreaTopAttractions(queryLocation.City, areaKey)
-			}
-
+			// Bootstrap functionality removed for simplicity
 			return &ResolveAreaResult{
 				Data:     result,
 				CacheAge: 86400, // Long cache for existing data
 			}, nil
 		}
-	}
 
-	// No results from database - query Nominatim
-	queryLocation := utils.BuildQueryLocation(originalQuery)
-	area, err := a.nominatim.GeocodeStructured(queryLocation)
-	if err != nil {
-		return nil, fmt.Errorf("location not found: %v", err)
-	}
+		// No results from database - query Nominatim
+		queryLocation := utils.BuildQueryLocation(originalQuery)
+		area, err := a.nominatim.GeocodeStructured(queryLocation)
+		if err != nil {
+			return nil, fmt.Errorf("location not found: %v", err)
+		}
 
-	// Save the result to database for future queries
-	if a.supabase != nil {
+		// Save the result to database for future queries
 		if saveErr := a.supabase.SaveArea(area); saveErr != nil {
 			// Log error but don't fail the request
 			fmt.Printf("Warning: Failed to save area to database: %v\n", saveErr)
 		}
+
+		// Bootstrap functionality removed for simplicity
+		return &ResolveAreaResult{
+			Data:     area,
+			CacheAge: 3600, // Shorter cache for new data
+		}, nil
 	}
 
-	// Handle bootstrap request if requested
-	if bootstrap && a.aiPlanner != nil {
-		go a.aiPlanner.GetAreaTopAttractions(queryLocation.City, area.AreaKey)
-	}
-
-	return &ResolveAreaResult{
-		Data:     area,
-		CacheAge: 3600, // Shorter cache for new data
-	}, nil
+	return nil, fmt.Errorf("Error with supabase in ResolveArea")
 }
 
 // hasValidResults checks if the database result contains valid data

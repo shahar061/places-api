@@ -72,3 +72,6 @@ coverage.html
 # docs/generated/
 
 places_api
+
+# air build log
+build-errors.log

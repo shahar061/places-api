@@ -11,6 +11,8 @@ type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
 	AI       AIConfig       `mapstructure:"ai"`
+	NATS     NATSConfig     `mapstructure:"nats"`
+	Logging  LoggingConfig  `mapstructure:"logging"`
 }
 
 // ServerConfig holds server-specific configuration
@@ -31,43 +33,48 @@ type AIConfig struct {
 	Model            string `mapstructure:"model"`
 }
 
-// LoadConfig reads configuration from file and environment variables
+// NATSConfig holds NATS-specific configuration
+type NATSConfig struct {
+	URL       string `mapstructure:"url"`
+	ClusterID string `mapstructure:"cluster_id"`
+}
+
+// LoggingConfig holds logging configuration
+type LoggingConfig struct {
+	Level      string `mapstructure:"level"`
+	Format     string `mapstructure:"format"`
+	TimeFormat string `mapstructure:"timeformat"`
+}
+
+// LoadConfig reads configuration from environment variables
 func LoadConfig(configPath string) (*Config, error) {
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-
-	if configPath != "" {
-		viper.SetConfigFile(configPath)
-	} else {
-		viper.AddConfigPath("./configs")
-		viper.AddConfigPath(".")
-	}
-
 	// Set default values
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
-	viper.SetDefault("ai.model", "x-ai/grok-4-fast:free")
+	viper.SetDefault("ai.model", "deepseek/deepseek-chat-v3.1:free")
+	viper.SetDefault("nats.url", "nats://localhost:4222")
+	viper.SetDefault("nats.cluster_id", "places-cluster")
+	viper.SetDefault("logging.level", "info")
+	viper.SetDefault("logging.format", "json")
+	viper.SetDefault("logging.timeformat", "rfc3339")
 
 	// Enable reading from environment variables
 	viper.AutomaticEnv()
-	viper.SetEnvPrefix("PLACES_API")
 
 	// Bind specific environment variables for nested configs
-	viper.BindEnv("database.supabase_url", "PLACES_API_DATABASE_SUPABASE_URL")
-	viper.BindEnv("database.supabase_key", "PLACES_API_DATABASE_SUPABASE_KEY")
-	viper.BindEnv("ai.openrouter_api_key", "PLACES_API_AI_OPENROUTER_API_KEY")
-	viper.BindEnv("ai.model", "PLACES_API_AI_MODEL")
-
-	// Read the config file
-	if err := viper.ReadInConfig(); err != nil {
-		// If config file is not found, we'll use defaults and env vars
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("error reading config file: %w", err)
-		}
-	}
+	viper.BindEnv("database.supabase_url", "SUPABASE_URL")
+	viper.BindEnv("database.supabase_key", "SUPABASE_KEY")
+	viper.BindEnv("ai.openrouter_api_key", "OPENROUTER_API_KEY")
+	viper.BindEnv("ai.model", "AI_MODEL")
+	viper.BindEnv("nats.url", "NATS_URL")
+	viper.BindEnv("nats.cluster_id", "NATS_CLUSTER_ID")
+	viper.BindEnv("server.host", "SERVER_HOST")
+	viper.BindEnv("server.port", "SERVER_PORT")
+	viper.BindEnv("logging.level", "LOG_LEVEL")
+	viper.BindEnv("logging.format", "LOG_FORMAT")
+	viper.BindEnv("logging.timeformat", "LOG_TIME_FORMAT")
 
 	// Override with standard PORT env var (used by hosting platforms)
-	// This must be after reading config file to override file settings
 	if port := viper.GetString("PORT"); port != "" {
 		viper.Set("server.port", port)
 	}

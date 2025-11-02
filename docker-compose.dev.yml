@@ -1,0 +1,34 @@
+services:
+  # Override API service for development with Air
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    # Mount source code for live reloading
+    volumes:
+      - .:/app
+      - /app/tmp # Exclude tmp directory from host
+      - ./logs:/app/logs # Mount logs directory
+    # Override environment for development
+    environment:
+      # Server config
+      - PLACES_API_SERVER_HOST=0.0.0.0
+      - PLACES_API_SERVER_PORT=8080
+
+      # Database config
+      - PLACES_API_DATABASE_SUPABASE_URL=${SUPABASE_URL}
+      - PLACES_API_DATABASE_SUPABASE_KEY=${SUPABASE_KEY}
+
+      # NATS config
+      - PLACES_API_NATS_URL=nats://nats:4222
+      - PLACES_API_NATS_CLUSTER_ID=places-cluster
+
+      # AI config (optional)
+      - PLACES_API_AI_OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+
+      # Development specific
+      - GIN_MODE=debug
+      - GO_ENV=development
+    # Remove healthcheck for faster development iteration
+    healthcheck:
+      disable: true
