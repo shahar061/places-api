@@ -45,7 +45,6 @@ WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/places_api_unix ./places_api
-COPY --from=builder /app/configs ./configs
 COPY --from=builder /app/docs ./docs
 
 # Change ownership
