@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/viper"
 )
@@ -48,6 +49,7 @@ type LoggingConfig struct {
 
 // LoadConfig reads configuration from environment variables
 func LoadConfig(configPath string) (*Config, error) {
+	fmt.Printf("Environment variables: %v\n", os.Environ())
 	// Set default values
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)

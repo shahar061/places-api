@@ -55,7 +55,7 @@ func New(cfg *config.Config) *Server {
 		natsService, err = services.NewNATSService(&cfg.NATS)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize NATS service: %v", err)
-			log.Printf("Background job processing will be disabled. Set PLACES_API_NATS_URL environment variable.")
+			log.Printf("Background job processing will be disabled. Set NATS_URL environment variable.")
 		} else {
 			// Initialize job service and worker
 			jobService := services.NewJobService(supabaseService, natsService)
