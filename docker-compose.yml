@@ -37,10 +37,6 @@ services:
       - PLACES_API_SERVER_HOST=0.0.0.0
       - PLACES_API_SERVER_PORT=8080
 
-      # Database config (you'll need to set these)
-      - PLACES_API_DATABASE_SUPABASE_URL=${SUPABASE_URL}
-      - PLACES_API_DATABASE_SUPABASE_KEY=${SUPABASE_KEY}
-
       # NATS config
       - PLACES_API_NATS_URL=nats://nats:4222
       - PLACES_API_NATS_CLUSTER_ID=places-cluster
