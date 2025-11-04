@@ -80,7 +80,9 @@ func (j *JobService) CreateFetchAttractionsJob(area *types.Area) (*types.Job, er
 
 	if err := j.supabase.UpsertAreaRefresh(refresh); err != nil {
 		// Log error but don't fail the job creation
-		fmt.Printf("Warning: Failed to create area refresh record: %v\n", err)
+		fmt.Printf("Warning: Failed to create area refresh record for area %s: %v\n", area.AreaKey, err)
+	} else {
+		fmt.Printf("Created area refresh record for area: %s\n", area.AreaKey)
 	}
 
 	// Publish to NATS
@@ -93,8 +95,14 @@ func (j *JobService) CreateFetchAttractionsJob(area *types.Area) (*types.Job, er
 
 	if err := j.nats.PublishFetchAttractionsJob(msg); err != nil {
 		// Update job status to failed
-		j.supabase.UpdateJobStatus(job.ID, types.JobStatusFailed, nil, &[]string{"Failed to publish job to queue"}[0])
-		return nil, fmt.Errorf("failed to publish job: %v", err)
+		errorMsg := "Failed to publish job to queue"
+		if updateErr := j.supabase.UpdateJobStatus(job.ID, types.JobStatusFailed, nil, &errorMsg); updateErr != nil {
+			fmt.Printf("Warning: Failed to update job status to failed: %v\n", updateErr)
+		}
+		// Note: Job and area refresh are already created in DB, but we return error
+		// so caller knows NATS publish failed. The DB records persist.
+		fmt.Printf("Warning: Job %s and area refresh created, but NATS publish failed: %v\n", job.ID, err)
+		return nil, fmt.Errorf("failed to publish job to NATS (job %s created in DB): %v", job.ID, err)
 	}
 
 	fmt.Printf("Created fetch attractions job for area: %s (job ID: %s)\n", area.AreaKey, job.ID)

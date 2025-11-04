@@ -203,6 +203,11 @@ func (h *Handler) enhanceWithJobInfo(areaData interface{}) (*types.ResolveAreaRe
 	switch v := areaData.(type) {
 	case types.Area:
 		area = v
+	case *types.Area:
+		if v == nil {
+			return nil, fmt.Errorf("area pointer is nil")
+		}
+		area = *v
 	case []types.Area:
 		if len(v) == 0 {
 			return nil, fmt.Errorf("no area data provided")
@@ -223,6 +228,8 @@ func (h *Handler) enhanceWithJobInfo(areaData interface{}) (*types.ResolveAreaRe
 		return nil, fmt.Errorf("failed to check data freshness: %v", err)
 	}
 
+	fmt.Printf("Data freshness check for area %s: IsStale=%v, PlaceCount=%d\n", area.AreaKey, freshness.IsStale, freshness.PlaceCount)
+
 	response := &types.ResolveAreaResponse{
 		Area:          area,
 		DataFreshness: *freshness,
@@ -230,12 +237,14 @@ func (h *Handler) enhanceWithJobInfo(areaData interface{}) (*types.ResolveAreaRe
 
 	// If data is stale, check for existing job or create new one
 	if freshness.IsStale {
+		fmt.Printf("Data is stale for area %s, checking if job should be created\n", area.AreaKey)
 		shouldCreate, existingJob, err := h.jobService.ShouldCreateJob(area.AreaKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check job status: %v", err)
 		}
 
 		if existingJob != nil {
+			fmt.Printf("Found existing job %s for area %s\n", existingJob.ID, area.AreaKey)
 			// Return existing job info
 			response.JobStatus = &types.JobInfo{
 				JobID:       existingJob.ID,
@@ -247,11 +256,14 @@ func (h *Handler) enhanceWithJobInfo(areaData interface{}) (*types.ResolveAreaRe
 				StatusURL:   fmt.Sprintf("/v1/jobs/%s/status", existingJob.ID),
 			}
 		} else if shouldCreate {
+			fmt.Printf("Creating new job for area %s\n", area.AreaKey)
 			// Create new job
 			job, err := h.jobService.CreateFetchAttractionsJob(&area)
 			if err != nil {
+				fmt.Printf("Error creating job for area %s: %v\n", area.AreaKey, err)
 				return nil, fmt.Errorf("failed to create job: %v", err)
 			}
+			fmt.Printf("Successfully created job %s for area %s\n", job.ID, area.AreaKey)
 
 			response.JobStatus = &types.JobInfo{
 				JobID:       job.ID,
