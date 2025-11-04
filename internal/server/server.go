@@ -52,15 +52,19 @@ func New(cfg *config.Config) *Server {
 	var jobWorker *worker.Worker
 
 	if cfg.NATS.URL != "" {
+		log.Printf("Attempting to connect to NATS at: %s", cfg.NATS.URL)
 		natsService, err = services.NewNATSService(&cfg.NATS)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize NATS service: %v", err)
-			log.Printf("Background job processing will be disabled. Set NATS_URL environment variable.")
+			log.Printf("Background job processing will be disabled. Ensure NATS service is running and accessible.")
+			log.Printf("If using Docker, verify NATS container is on the same network and the hostname is resolvable.")
 		} else {
 			// Initialize job service and worker
 			jobService := services.NewJobService(supabaseService, natsService)
 			jobWorker = worker.NewWorker(jobService, natsService, supabaseService, aiService, photonService)
 		}
+	} else {
+		log.Printf("NATS URL not configured. Set PLACES_API_NATS_URL or NATS_URL environment variable to enable background job processing.")
 	}
 
 	handler := handlers.New(cfg, supabaseService, natsService)

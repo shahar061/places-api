@@ -22,8 +22,22 @@ func NewNATSService(cfg *config.NATSConfig) (*NATSService, error) {
 		return nil, fmt.Errorf("NATS URL is required")
 	}
 
-	// Connect to NATS
-	nc, err := nats.Connect(cfg.URL)
+	// Connect to NATS with retry options for better reliability
+	// This helps with network issues in containerized environments
+	opts := []nats.Option{
+		nats.ReconnectWait(2 * time.Second),
+		nats.MaxReconnects(10),
+		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+			if err != nil {
+				fmt.Printf("NATS disconnected: %v\n", err)
+			}
+		}),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			fmt.Printf("NATS reconnected to %s\n", nc.ConnectedUrl())
+		}),
+	}
+
+	nc, err := nats.Connect(cfg.URL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to NATS: %v", err)
 	}
