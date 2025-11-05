@@ -51,8 +51,11 @@ type LoggingConfig struct {
 // It tries each env var name in order until it finds one that exists
 func bindEnvWithFallback(key string, envVars ...string) {
 	for _, envVar := range envVars {
-		if os.Getenv(envVar) != "" {
+		value := os.Getenv(envVar)
+		if value != "" {
+			// Bind and also set directly to ensure it's loaded
 			viper.BindEnv(key, envVar)
+			viper.Set(key, value)
 			return
 		}
 	}
@@ -100,6 +103,20 @@ func LoadConfig(configPath string) (*Config, error) {
 	var config Config
 	if err := viper.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
+	}
+
+	// Debug: Log API key status (masked for security)
+	if config.AI.OpenRouterAPIKey != "" {
+		keyPreview := config.AI.OpenRouterAPIKey
+		if len(keyPreview) > 8 {
+			keyPreview = keyPreview[:8] + "..."
+		}
+		fmt.Printf("AI OpenRouter API key loaded: %s (model: %s)\n", keyPreview, config.AI.Model)
+	} else {
+		fmt.Printf("Warning: AI OpenRouter API key is NOT configured (checking env vars: PLACES_API_AI_OPENROUTER_API_KEY, OPENROUTER_API_KEY)\n")
+		// Debug: Check what viper sees
+		fmt.Printf("Debug: viper.Get('ai.openrouter_api_key') = '%s'\n", viper.GetString("ai.openrouter_api_key"))
+		fmt.Printf("Debug: viper.Get('PLACES_API_AI_OPENROUTER_API_KEY') = '%s'\n", viper.GetString("PLACES_API_AI_OPENROUTER_API_KEY"))
 	}
 
 	return &config, nil
