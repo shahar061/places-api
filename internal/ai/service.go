@@ -6,6 +6,7 @@ import (
 	"places_api/internal/config"
 	"places_api/internal/logger"
 	"places_api/internal/types"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -164,6 +165,9 @@ func (s *Service) GetTopAttractions(area *types.Area) (*types.AttractionResponse
 	content := openRouterResp.Choices[0].Message.Content
 	areaLogger.Debug().Int("response_length", len(content)).Msg("Received AI response")
 
+	// Strip markdown code fences if present (AI sometimes returns JSON wrapped in ```)
+	content = stripMarkdownCodeFences(content)
+
 	// Parse the JSON response
 	var attractionResp types.AttractionResponse
 	if err := json.Unmarshal([]byte(content), &attractionResp); err != nil {
@@ -188,4 +192,33 @@ func (s *Service) GetTopAttractions(area *types.Area) (*types.AttractionResponse
 		Msg("Successfully retrieved attractions from AI")
 
 	return &attractionResp, nil
+}
+
+// stripMarkdownCodeFences removes markdown code fence markers (```) from the content
+// This handles cases where AI models return JSON wrapped in markdown code blocks
+func stripMarkdownCodeFences(content string) string {
+	content = strings.TrimSpace(content)
+
+	// Remove leading triple backticks and optional language identifier
+	if strings.HasPrefix(content, "```") {
+		// Find the first newline after the opening ```
+		newlineIndex := strings.Index(content, "\n")
+		if newlineIndex != -1 {
+			// Remove everything up to and including the newline
+			content = content[newlineIndex+1:]
+		} else {
+			// No newline, remove the ``` and trim any whitespace/language identifier
+			content = strings.TrimPrefix(content, "```")
+			content = strings.TrimSpace(content)
+		}
+	}
+
+	// Remove trailing triple backticks
+	content = strings.TrimSpace(content)
+	if strings.HasSuffix(content, "```") {
+		content = strings.TrimSuffix(content, "```")
+		content = strings.TrimSpace(content)
+	}
+
+	return content
 }
