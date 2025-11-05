@@ -41,9 +41,6 @@ services:
       - PLACES_API_NATS_URL=nats://nats:4222
       - PLACES_API_NATS_CLUSTER_ID=places-cluster
 
-      # AI config (optional)
-      - PLACES_API_AI_OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-
       # Logging config
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
