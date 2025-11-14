@@ -530,10 +530,8 @@ func (s *SupabaseService) UpdateAreaRefreshCompleted(areaKey string, placeCount 
 		refreshRequestedAt = existingRefresh.RefreshRequestedAt
 	}
 
-	// Use upsert to ensure the record exists and is updated
-	// This handles both create and update cases
-	upsertData := map[string]interface{}{
-		"area_key":             areaKey,
+	// Prepare update data
+	updateData := map[string]interface{}{
 		"last_refreshed_at":    now,
 		"refresh_requested_at": refreshRequestedAt,
 		"data_expires_at":      expiresAt,
@@ -542,9 +540,39 @@ func (s *SupabaseService) UpdateAreaRefreshCompleted(areaKey string, placeCount 
 		"categories":           []string{"attraction", "restaurant", "cafe", "bar", "hotel"},
 	}
 
-	_, _, err = s.client.From(areaRefreshesTable).Upsert(upsertData, "", "", "").Execute()
+	// Try to update first
+	response, _, err := s.client.From(areaRefreshesTable).Update(updateData, "", "").Eq("area_key", areaKey).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to update area refresh completion: %v", err)
+	}
+
+	// Check if any rows were updated
+	var updatedRows []map[string]interface{}
+	if err := json.Unmarshal(response, &updatedRows); err == nil && len(updatedRows) == 0 {
+		// No rows updated, record doesn't exist - insert it
+		insertData := map[string]interface{}{
+			"area_key":             areaKey,
+			"last_refreshed_at":    now,
+			"refresh_requested_at": refreshRequestedAt,
+			"data_expires_at":      expiresAt,
+			"place_count":          placeCount,
+			"updated_at":           now,
+			"categories":           []string{"attraction", "restaurant", "cafe", "bar", "hotel"},
+		}
+
+		_, _, err = s.client.From(areaRefreshesTable).Insert(insertData, false, "", "", "").Execute()
+		if err != nil {
+			// If insert fails due to race condition (another process inserted it), try update again
+			if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
+				// Race condition - another process inserted it, try update again
+				_, _, updateErr := s.client.From(areaRefreshesTable).Update(updateData, "", "").Eq("area_key", areaKey).Execute()
+				if updateErr != nil {
+					return fmt.Errorf("failed to update area refresh completion after race condition: %v", updateErr)
+				}
+				return nil
+			}
+			return fmt.Errorf("failed to insert area refresh completion: %v", err)
+		}
 	}
 
 	return nil
