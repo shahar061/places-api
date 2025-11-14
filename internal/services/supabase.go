@@ -523,14 +523,26 @@ func (s *SupabaseService) UpdateAreaRefreshCompleted(areaKey string, placeCount 
 	now := time.Now()
 	expiresAt := now.Add(30 * 24 * time.Hour) // 30 days TTL
 
-	updateData := map[string]interface{}{
-		"last_refreshed_at": now,
-		"data_expires_at":   expiresAt,
-		"place_count":       placeCount,
-		"updated_at":        now,
+	// Try to get existing record to preserve refresh_requested_at
+	existingRefresh, err := s.GetAreaRefresh(areaKey)
+	refreshRequestedAt := now
+	if err == nil && !existingRefresh.RefreshRequestedAt.IsZero() {
+		refreshRequestedAt = existingRefresh.RefreshRequestedAt
 	}
 
-	_, _, err := s.client.From(areaRefreshesTable).Update(updateData, "", "").Eq("area_key", areaKey).Execute()
+	// Use upsert to ensure the record exists and is updated
+	// This handles both create and update cases
+	upsertData := map[string]interface{}{
+		"area_key":             areaKey,
+		"last_refreshed_at":    now,
+		"refresh_requested_at": refreshRequestedAt,
+		"data_expires_at":      expiresAt,
+		"place_count":          placeCount,
+		"updated_at":           now,
+		"categories":           []string{"attraction", "restaurant", "cafe", "bar", "hotel"},
+	}
+
+	_, _, err = s.client.From(areaRefreshesTable).Upsert(upsertData, "", "", "").Execute()
 	if err != nil {
 		return fmt.Errorf("failed to update area refresh completion: %v", err)
 	}
