@@ -388,13 +388,24 @@ func (s *SupabaseService) GetLatestJobForArea(areaKey string) (*types.Job, error
 
 // UpdateJobStatus updates a job's status and progress
 func (s *SupabaseService) UpdateJobStatus(jobID string, status types.JobStatus, progress map[string]interface{}, errorMessage *string) error {
+	// Get current job to check if started_at needs to be set
+	currentJob, err := s.GetJob(jobID)
+	if err != nil {
+		// If we can't get the job, still proceed with the update
+		// but we won't be able to set started_at conditionally
+		currentJob = nil
+	}
+
 	updateData := map[string]interface{}{
 		"status":   string(status),
 		"progress": progress,
 	}
 
-	if status == types.JobStatusRunning && progress == nil {
-		updateData["started_at"] = time.Now()
+	// Set started_at when transitioning to Running status (only if not already set)
+	if status == types.JobStatusRunning {
+		if currentJob == nil || currentJob.StartedAt == nil {
+			updateData["started_at"] = time.Now()
+		}
 	}
 
 	if status == types.JobStatusCompleted || status == types.JobStatusFailed {
@@ -405,7 +416,7 @@ func (s *SupabaseService) UpdateJobStatus(jobID string, status types.JobStatus, 
 		updateData["error_message"] = *errorMessage
 	}
 
-	_, _, err := s.client.From(jobsTable).Update(updateData, "", "").Eq("id", jobID).Execute()
+	_, _, err = s.client.From(jobsTable).Update(updateData, "", "").Eq("id", jobID).Execute()
 	if err != nil {
 		return fmt.Errorf("failed to update job status: %v", err)
 	}

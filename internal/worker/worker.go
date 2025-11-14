@@ -62,6 +62,10 @@ func (w *Worker) processFetchAttractionsJob(msg *types.FetchAttractionsMessage) 
 	attractions, err := w.aiService.GetTopAttractions(&msg.Area)
 	if err != nil {
 		fmt.Printf("Error getting top attractions: %v\n", err)
+		// Mark job as failed
+		if markErr := w.jobService.MarkJobFailed(msg.JobID, fmt.Sprintf("Failed to get attractions from AI: %v", err)); markErr != nil {
+			fmt.Printf("Error marking job as failed: %v\n", markErr)
+		}
 		return err
 	}
 
@@ -76,10 +80,21 @@ func (w *Worker) processFetchAttractionsJob(msg *types.FetchAttractionsMessage) 
 	err = w.supabase.SaveAttractions(attractions, msg.Area.AreaKey)
 	if err != nil {
 		fmt.Printf("Error saving attractions to database: %v\n", err)
+		// Mark job as failed
+		if markErr := w.jobService.MarkJobFailed(msg.JobID, fmt.Sprintf("Failed to save attractions to database: %v", err)); markErr != nil {
+			fmt.Printf("Error marking job as failed: %v\n", markErr)
+		}
 		return err
 	}
 
 	fmt.Printf("Successfully processed and saved %d attractions for area %s\n", totalProcessed, msg.Area.AreaKey)
+
+	// Mark job as completed
+	if err := w.jobService.CompleteJob(msg.JobID, totalProcessed); err != nil {
+		fmt.Printf("Error completing job: %v\n", err)
+		return err
+	}
+
 	return nil
 }
 

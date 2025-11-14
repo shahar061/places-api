@@ -188,7 +188,7 @@ func (s *Service) GetTopAttractions(area *types.Area) (*types.AttractionResponse
 		Int("bars_count", len(attractionResp.Bars)).
 		Int("hotels_count", len(attractionResp.Hotels)).
 		Int("total_items", totalAttractions).
-		Dur("total_duration", totalDuration).
+		Float64("total_duration", totalDuration.Seconds()).
 		Msg("Successfully retrieved attractions from AI")
 
 	return &attractionResp, nil
