@@ -3,10 +3,26 @@ package utils
 import (
 	"places_api/internal/types"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
+
+// NormalizeToASCII converts non-ASCII characters to their ASCII equivalents
+// e.g., "île-de-france" → "ile-de-france", "café" → "cafe"
+func NormalizeToASCII(s string) string {
+	// Remove diacritics (accents) and convert to ASCII
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	result, _, _ := transform.String(t, s)
+	return result
+}
 
 // SanitizeQuery transforms a free-text query into a canonical form suitable for area key lookup
 func SanitizeQuery(query string) string {
+	// Normalize to ASCII first
+	query = NormalizeToASCII(query)
 	// Sanitize the query and transform it to a canonical form
 	query = strings.TrimSpace(query)
 	query = strings.ToLower(query)

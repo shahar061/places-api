@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"places_api/internal/types"
+	"places_api/internal/utils"
 	"strconv"
 	"strings"
 	"sync"
@@ -204,13 +205,13 @@ func (ns *NominatimService) convertToArea(result NominatimResponse, queryLoc typ
 func (ns *NominatimService) generateAreaKey(queryLoc types.QueryLocation) string {
 	parts := []string{}
 	if queryLoc.City != "" {
-		parts = append(parts, strings.ToLower(queryLoc.City))
+		parts = append(parts, utils.NormalizeToASCII(strings.ToLower(queryLoc.City)))
 	}
 	if queryLoc.Region != "" {
-		parts = append(parts, strings.ToLower(queryLoc.Region))
+		parts = append(parts, utils.NormalizeToASCII(strings.ToLower(queryLoc.Region)))
 	}
 	if queryLoc.Country != "" {
-		parts = append(parts, strings.ToLower(queryLoc.Country))
+		parts = append(parts, utils.NormalizeToASCII(strings.ToLower(queryLoc.Country)))
 	}
 	return strings.Join(parts, "_")
 }
