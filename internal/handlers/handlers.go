@@ -10,6 +10,7 @@ import (
 	"places_api/internal/logger"
 	"places_api/internal/services"
 	"places_api/internal/types"
+	"places_api/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -144,8 +145,9 @@ func (h *Handler) HandleGetTopPlaces(c *gin.Context) {
 		return
 	}
 
-	// Transform area key to lowercase
-	area = strings.ToLower(area)
+	// Normalize area key: convert to lowercase and normalize non-ASCII characters to ASCII
+	// This ensures backward compatibility with old non-ASCII keys while new keys are stored as ASCII
+	area = utils.NormalizeToASCII(strings.ToLower(area))
 
 	_ = c.DefaultQuery("cats", "attraction,restaurant,cafe,bar,hotel") // TODO: implement category filtering
 	limitStr := c.DefaultQuery("limit", "50")

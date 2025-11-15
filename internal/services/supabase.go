@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"places_api/internal/config"
 	"places_api/internal/types"
@@ -139,10 +140,13 @@ func (s *SupabaseService) GetTopPlaces(areaKey string, categories string, limit,
 	fmt.Printf("Getting top places for area: %s, categories: %s, limit: %d, offset: %d\n", areaKey, categories, limit, offset)
 
 	// Build query URL - search for places where area_key equals areaKey or id starts with areaKey
-	url := fmt.Sprintf("%s/places?select=*", s.baseURL)
+	queryURL := fmt.Sprintf("%s/places?select=*", s.baseURL)
+
+	// URL encode the areaKey to safely handle any special characters in the query
+	encodedAreaKey := url.QueryEscape(areaKey)
 
 	// Filter by area_key or id starting with area key
-	url += fmt.Sprintf("&or=(area_key.eq.%s,id.like.%s%%2A)", areaKey, areaKey)
+	queryURL += fmt.Sprintf("&or=(area_key.eq.%s,id.like.%s%%2A)", encodedAreaKey, encodedAreaKey)
 
 	// Filter by categories if provided
 	if categories != "" {
@@ -151,24 +155,24 @@ func (s *SupabaseService) GetTopPlaces(areaKey string, categories string, limit,
 		for i, cat := range categoryList {
 			categoryFilters[i] = fmt.Sprintf("category.eq.%s", strings.TrimSpace(cat))
 		}
-		url += fmt.Sprintf("&or=(%s)", strings.Join(categoryFilters, ","))
+		queryURL += fmt.Sprintf("&or=(%s)", strings.Join(categoryFilters, ","))
 	}
 
 	// Order by popularity descending
-	url += "&order=popularity.desc"
+	queryURL += "&order=popularity.desc"
 
 	// Apply limit and offset
 	if limit > 0 {
-		url += fmt.Sprintf("&limit=%d", limit)
+		queryURL += fmt.Sprintf("&limit=%d", limit)
 	}
 	if offset > 0 {
-		url += fmt.Sprintf("&offset=%d", offset)
+		queryURL += fmt.Sprintf("&offset=%d", offset)
 	}
 
-	fmt.Printf("Querying: %s\n", url)
+	fmt.Printf("Querying: %s\n", queryURL)
 
 	// Create request
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", queryURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
