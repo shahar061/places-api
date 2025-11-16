@@ -33,6 +33,7 @@ func (h *Handler) SetupRoutes(router *gin.Engine) {
 		places := v1.Group("/places")
 		{
 			places.GET("/top", h.HandleGetTopPlaces)
+			places.GET("/search", h.HandleSearchPlaceByTextQuery)
 		}
 
 		// Jobs endpoints

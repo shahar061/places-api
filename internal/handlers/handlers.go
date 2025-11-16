@@ -17,16 +17,17 @@ import (
 
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
-	config      *config.Config
-	supabase    *services.SupabaseService
-	areaService *services.AreaResolutionService
-	jobService  *services.JobService
-	natsService *services.NATSService
-	logger      *logger.Logger
+	config        *config.Config
+	supabase      *services.SupabaseService
+	areaService   *services.AreaResolutionService
+	jobService    *services.JobService
+	natsService   *services.NATSService
+	photonService *services.PhotonService
+	logger        *logger.Logger
 }
 
 // New creates a new Handler instance
-func New(cfg *config.Config, supabaseService *services.SupabaseService, natsService *services.NATSService) *Handler {
+func New(cfg *config.Config, supabaseService *services.SupabaseService, natsService *services.NATSService, photonService *services.PhotonService) *Handler {
 	nominatim := services.NewNominatimService()
 	areaService := services.NewAreaResolutionService(supabaseService, nominatim)
 
@@ -36,12 +37,13 @@ func New(cfg *config.Config, supabaseService *services.SupabaseService, natsServ
 	}
 
 	return &Handler{
-		config:      cfg,
-		supabase:    supabaseService,
-		areaService: areaService,
-		jobService:  jobService,
-		natsService: natsService,
-		logger:      logger.WithComponent("handlers"),
+		config:        cfg,
+		supabase:      supabaseService,
+		areaService:   areaService,
+		jobService:    jobService,
+		natsService:   natsService,
+		photonService: photonService,
+		logger:        logger.WithComponent("handlers"),
 	}
 }
 
@@ -329,4 +331,97 @@ func (h *Handler) HandleJobStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, jobInfo)
+}
+
+// HandleSearchPlacesByText handles GET /v1/places/search
+// @Summary Search places by text
+// @Description Search for places by text using Photon geocoding service
+// @Tags places
+// @Accept json
+// @Produce json
+// @Param q query string true "Text query to search for"
+// @Param latitude query number false "Latitude for better search results"
+// @Param longitude query number false "Longitude for better search results"
+// @Success 200 {object} services.PhotonLocation "First search result from Photon"
+// @Failure 400 {object} map[string]string "Bad request"
+// @Failure 404 {object} map[string]string "No results found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /v1/places/search [get]
+func (h *Handler) HandleSearchPlaceByTextQuery(c *gin.Context) {
+	// Get and validate query parameter
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter 'q' is required"})
+		return
+	}
+
+	// Get latitude and longitude (optional)
+	var latitude, longitude float64
+	var err error
+
+	latStr := c.Query("latitude")
+	lonStr := c.Query("longitude")
+
+	// If latitude is provided, validate it
+	if latStr != "" {
+		latitude, err = strconv.ParseFloat(latStr, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid latitude parameter"})
+			return
+		}
+		// Validate latitude range
+		if latitude < -90 || latitude > 90 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "latitude must be between -90 and 90"})
+			return
+		}
+	}
+
+	// If longitude is provided, validate it
+	if lonStr != "" {
+		longitude, err = strconv.ParseFloat(lonStr, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid longitude parameter"})
+			return
+		}
+		// Validate longitude range
+		if longitude < -180 || longitude > 180 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "longitude must be between -180 and 180"})
+			return
+		}
+	}
+
+	// If one coordinate is provided, both should be provided
+	if (latStr != "" && lonStr == "") || (latStr == "" && lonStr != "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "both latitude and longitude must be provided together"})
+		return
+	}
+
+	// Check if photon service is available
+	if h.photonService == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "photon service is not available"})
+		return
+	}
+
+	// Default coordinates to 0 if not provided (photon will still work without them)
+	if latStr == "" && lonStr == "" {
+		latitude = 0
+		longitude = 0
+	}
+
+	// Search photon for the location
+	result, err := h.photonService.GetLocationData(query, latitude, longitude)
+	if err != nil {
+		// Check if it's a "no results" error
+		if err.Error() == "no results found for query" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no results found for query"})
+			return
+		}
+		// Other errors are internal server errors
+		h.logger.Error().Err(err).Msg("Failed to search photon")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to search places"})
+		return
+	}
+
+	// Return the first result
+	c.JSON(http.StatusOK, result)
 }
