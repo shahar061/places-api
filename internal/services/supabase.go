@@ -651,8 +651,9 @@ func (s *SupabaseService) FindLocation(term string, limit int) ([]types.Validate
 	functionURL := fmt.Sprintf("%s/functions/v1/locations-finder", baseURL)
 
 	// Prepare request body
+	normalizedTerm := strings.ToLower(strings.TrimSpace(term))
 	requestBody := map[string]interface{}{
-		"term":  strings.ToLower(strings.TrimSpace(term)),
+		"term":  normalizedTerm,
 		"limit": limit,
 	}
 
@@ -661,15 +662,20 @@ func (s *SupabaseService) FindLocation(term string, limit int) ([]types.Validate
 		return nil, fmt.Errorf("failed to marshal request body: %v", err)
 	}
 
+	// Log request
+	fmt.Printf("🔍 Validating location: %q (limit: %d)\n", term, limit)
+
 	// Create request
 	req, err := http.NewRequest("POST", functionURL, strings.NewReader(string(bodyJSON)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
+	// Set headers like Supabase SDK does
 	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("apikey", s.apiKey) // Required by Supabase
 
 	// Execute request
 	resp, err := s.httpClient.Do(req)
@@ -680,13 +686,26 @@ func (s *SupabaseService) FindLocation(term string, limit int) ([]types.Validate
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		fmt.Printf("❌ Edge function error - Status: %d, Body: %s\n", resp.StatusCode, string(bodyBytes))
 		return nil, fmt.Errorf("edge function returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Read response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
 
 	// Parse response
 	var locations []types.ValidatedLocation
-	if err := json.NewDecoder(resp.Body).Decode(&locations); err != nil {
+	if err := json.Unmarshal(bodyBytes, &locations); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	if len(locations) > 0 {
+		fmt.Printf("✅ Found location: %s (ID: %s)\n", locations[0].Name, locations[0].ID)
+	} else {
+		fmt.Printf("⚠️  No locations found for %q\n", term)
 	}
 
 	return locations, nil
