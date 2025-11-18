@@ -50,6 +50,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/airports/major-city": {
+            "post": {
+                "description": "Determine the primary major city that an airport serves using AI",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "airports"
+                ],
+                "summary": "Determine major city for an airport",
+                "parameters": [
+                    {
+                        "description": "Airport information",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.AirportMajorCityRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Major city determination result",
+                        "schema": {
+                            "$ref": "#/definitions/types.AirportMajorCityResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/areas/resolve": {
             "get": {
                 "description": "Turn free-text queries like \"Rome, Lazio, Italy\" into canonical area keys with geometry.",
@@ -96,6 +157,127 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/jobs/{jobId}/status": {
+            "get": {
+                "description": "Get the current status and progress of a background job",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "jobs"
+                ],
+                "summary": "Get job status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job ID",
+                        "name": "jobId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Job status information",
+                        "schema": {
+                            "$ref": "#/definitions/types.JobInfo"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Job not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/places/search": {
+            "get": {
+                "description": "Search for places by text using Photon geocoding service",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "places"
+                ],
+                "summary": "Search places by text",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Text query to search for",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Latitude for better search results",
+                        "name": "latitude",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Longitude for better search results",
+                        "name": "longitude",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "First search result from Photon",
+                        "schema": {
+                            "$ref": "#/definitions/services.PhotonLocation"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "No results found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -190,6 +372,110 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "services.PhotonLocation": {
+            "type": "object",
+            "properties": {
+                "geometry": {
+                    "type": "object",
+                    "properties": {
+                        "coordinates": {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        },
+                        "type": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "properties": {
+                    "type": "object",
+                    "properties": {
+                        "city": {
+                            "type": "string"
+                        },
+                        "country": {
+                            "type": "string"
+                        },
+                        "countrycode": {
+                            "type": "string"
+                        },
+                        "county": {
+                            "type": "string"
+                        },
+                        "housenumber": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "osm_id": {
+                            "type": "integer"
+                        },
+                        "osm_key": {
+                            "type": "string"
+                        },
+                        "osm_type": {
+                            "type": "string"
+                        },
+                        "osm_value": {
+                            "type": "string"
+                        },
+                        "postcode": {
+                            "type": "string"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "street": {
+                            "type": "string"
+                        },
+                        "type": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.AirportMajorCityRequest": {
+            "type": "object",
+            "required": [
+                "airport_name",
+                "region_name"
+            ],
+            "properties": {
+                "airport_name": {
+                    "type": "string"
+                },
+                "region_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.AirportMajorCityResponse": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "number"
+                },
+                "country": {
+                    "type": "string"
+                },
+                "major_city": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "reasoning": {
+                    "type": "string"
+                }
+            }
+        },
         "types.Area": {
             "type": "object",
             "properties": {
@@ -250,6 +536,67 @@ const docTemplate = `{
                     "type": "number"
                 }
             }
+        },
+        "types.JobInfo": {
+            "type": "object",
+            "properties": {
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "job_id": {
+                    "type": "string"
+                },
+                "progress": {
+                    "$ref": "#/definitions/types.JobProgress"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/types.JobStatus"
+                },
+                "status_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.JobProgress": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "percentage": {
+                    "type": "integer"
+                },
+                "step": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.JobStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed"
+            ],
+            "x-enum-varnames": [
+                "JobStatusPending",
+                "JobStatusRunning",
+                "JobStatusCompleted",
+                "JobStatusFailed"
+            ]
         }
     }
 }`

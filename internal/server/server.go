@@ -67,7 +67,7 @@ func New(cfg *config.Config) *Server {
 		log.Printf("NATS URL not configured. Set PLACES_API_NATS_URL or NATS_URL environment variable to enable background job processing.")
 	}
 
-	handler := handlers.New(cfg, supabaseService, natsService, photonService)
+	handler := handlers.New(cfg, supabaseService, natsService, photonService, aiService)
 
 	server := &Server{
 		config:      cfg,

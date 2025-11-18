@@ -1,5 +1,73 @@
 basePath: /
 definitions:
+  services.PhotonLocation:
+    properties:
+      geometry:
+        properties:
+          coordinates:
+            items:
+              type: number
+            type: array
+          type:
+            type: string
+        type: object
+      properties:
+        properties:
+          city:
+            type: string
+          country:
+            type: string
+          countrycode:
+            type: string
+          county:
+            type: string
+          housenumber:
+            type: string
+          name:
+            type: string
+          osm_id:
+            type: integer
+          osm_key:
+            type: string
+          osm_type:
+            type: string
+          osm_value:
+            type: string
+          postcode:
+            type: string
+          state:
+            type: string
+          street:
+            type: string
+          type:
+            type: string
+        type: object
+      type:
+        type: string
+    type: object
+  types.AirportMajorCityRequest:
+    properties:
+      airport_name:
+        type: string
+      region_name:
+        type: string
+    required:
+    - airport_name
+    - region_name
+    type: object
+  types.AirportMajorCityResponse:
+    properties:
+      confidence:
+        type: number
+      country:
+        type: string
+      major_city:
+        type: string
+      notes:
+        type: string
+      reasoning:
+        type: string
+    type: object
   types.Area:
     properties:
       admin_level:
@@ -40,6 +108,48 @@ definitions:
       lon:
         type: number
     type: object
+  types.JobInfo:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      job_id:
+        type: string
+      progress:
+        $ref: '#/definitions/types.JobProgress'
+      started_at:
+        type: string
+      status:
+        $ref: '#/definitions/types.JobStatus'
+      status_url:
+        type: string
+    type: object
+  types.JobProgress:
+    properties:
+      current:
+        type: integer
+      message:
+        type: string
+      percentage:
+        type: integer
+      step:
+        type: string
+      total:
+        type: integer
+    type: object
+  types.JobStatus:
+    enum:
+    - pending
+    - running
+    - completed
+    - failed
+    type: string
+    x-enum-varnames:
+    - JobStatusPending
+    - JobStatusRunning
+    - JobStatusCompleted
+    - JobStatusFailed
 host: localhost:8080
 info:
   contact:
@@ -71,6 +181,46 @@ paths:
       summary: Health check
       tags:
       - system
+  /v1/airports/major-city:
+    post:
+      consumes:
+      - application/json
+      description: Determine the primary major city that an airport serves using AI
+      parameters:
+      - description: Airport information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.AirportMajorCityRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Major city determination result
+          schema:
+            $ref: '#/definitions/types.AirportMajorCityResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Determine major city for an airport
+      tags:
+      - airports
   /v1/areas/resolve:
     get:
       consumes:
@@ -109,6 +259,86 @@ paths:
       summary: Resolve area from text query
       tags:
       - areas
+  /v1/jobs/{jobId}/status:
+    get:
+      consumes:
+      - application/json
+      description: Get the current status and progress of a background job
+      parameters:
+      - description: Job ID
+        in: path
+        name: jobId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Job status information
+          schema:
+            $ref: '#/definitions/types.JobInfo'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Job not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get job status
+      tags:
+      - jobs
+  /v1/places/search:
+    get:
+      consumes:
+      - application/json
+      description: Search for places by text using Photon geocoding service
+      parameters:
+      - description: Text query to search for
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: Latitude for better search results
+        in: query
+        name: latitude
+        type: number
+      - description: Longitude for better search results
+        in: query
+        name: longitude
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: First search result from Photon
+          schema:
+            $ref: '#/definitions/services.PhotonLocation'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: No results found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Search places by text
+      tags:
+      - places
   /v1/places/top:
     get:
       consumes:

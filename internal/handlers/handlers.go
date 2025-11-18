@@ -23,11 +23,17 @@ type Handler struct {
 	jobService    *services.JobService
 	natsService   *services.NATSService
 	photonService *services.PhotonService
+	aiService     AIService
 	logger        *logger.Logger
 }
 
+// AIService interface defines the methods we need from the AI service
+type AIService interface {
+	GetAirportMajorCity(airportName, regionName string) (*types.AirportMajorCityResponse, error)
+}
+
 // New creates a new Handler instance
-func New(cfg *config.Config, supabaseService *services.SupabaseService, natsService *services.NATSService, photonService *services.PhotonService) *Handler {
+func New(cfg *config.Config, supabaseService *services.SupabaseService, natsService *services.NATSService, photonService *services.PhotonService, aiService AIService) *Handler {
 	nominatim := services.NewNominatimService()
 	areaService := services.NewAreaResolutionService(supabaseService, nominatim)
 
@@ -43,6 +49,7 @@ func New(cfg *config.Config, supabaseService *services.SupabaseService, natsServ
 		jobService:    jobService,
 		natsService:   natsService,
 		photonService: photonService,
+		aiService:     aiService,
 		logger:        logger.WithComponent("handlers"),
 	}
 }
@@ -423,5 +430,83 @@ func (h *Handler) HandleSearchPlaceByTextQuery(c *gin.Context) {
 	}
 
 	// Return the first result
+	c.JSON(http.StatusOK, result)
+}
+
+// HandleDetermineAirportMajorCity handles POST /v1/airports/major-city
+// @Summary Determine major city for an airport
+// @Description Determine the primary major city that an airport serves using AI
+// @Tags airports
+// @Accept json
+// @Produce json
+// @Param request body types.AirportMajorCityRequest true "Airport information"
+// @Success 200 {object} types.AirportMajorCityResponse "Major city determination result"
+// @Failure 400 {object} map[string]string "Bad request"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Failure 503 {object} map[string]string "Service unavailable"
+// @Router /v1/airports/major-city [post]
+func (h *Handler) HandleDetermineAirportMajorCity(c *gin.Context) {
+	var req types.AirportMajorCityRequest
+
+	// Bind and validate the request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("invalid request: %v", err),
+		})
+		return
+	}
+
+	// Validate required fields (additional validation beyond binding)
+	if req.AirportName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "airport_name is required",
+		})
+		return
+	}
+
+	if req.RegionName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "region_name is required",
+		})
+		return
+	}
+
+	// Check if AI service is available
+	if h.aiService == nil {
+		h.logger.Error().Msg("AI service is not available")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "AI service is not available",
+		})
+		return
+	}
+
+	// Call AI service to determine major city
+	h.logger.Info().
+		Str("airport_name", req.AirportName).
+		Str("region_name", req.RegionName).
+		Msg("Determining airport major city")
+
+	result, err := h.aiService.GetAirportMajorCity(req.AirportName, req.RegionName)
+	if err != nil {
+		h.logger.Error().
+			Err(err).
+			Str("airport_name", req.AirportName).
+			Str("region_name", req.RegionName).
+			Msg("Failed to determine airport major city")
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to determine major city",
+		})
+		return
+	}
+
+	h.logger.Info().
+		Str("airport_name", req.AirportName).
+		Str("major_city", result.MajorCity).
+		Str("country", result.Country).
+		Float64("confidence", result.Confidence).
+		Msg("Successfully determined airport major city")
+
+	// Return the result
 	c.JSON(http.StatusOK, result)
 }

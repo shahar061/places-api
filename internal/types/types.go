@@ -419,3 +419,17 @@ func (j *Job) GetProgress() *JobProgress {
 
 	return progress
 }
+
+// Airport Major City types
+type AirportMajorCityRequest struct {
+	AirportName string `json:"airport_name" binding:"required"`
+	RegionName  string `json:"region_name" binding:"required"`
+}
+
+type AirportMajorCityResponse struct {
+	MajorCity  string  `json:"major_city"`
+	Country    string  `json:"country"`
+	Confidence float64 `json:"confidence"`
+	Reasoning  string  `json:"reasoning"`
+	Notes      string  `json:"notes"`
+}

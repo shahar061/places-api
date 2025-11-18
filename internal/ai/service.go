@@ -194,6 +194,124 @@ func (s *Service) GetTopAttractions(area *types.Area) (*types.AttractionResponse
 	return &attractionResp, nil
 }
 
+// GetAirportMajorCity determines the major city for an airport using AI
+func (s *Service) GetAirportMajorCity(airportName, regionName string) (*types.AirportMajorCityResponse, error) {
+	start := time.Now()
+	reqLogger := &logger.Logger{
+		Logger: s.logger.With().
+			Str("airport_name", airportName).
+			Str("region_name", regionName).
+			Logger(),
+	}
+
+	reqLogger.Info().Msg("Starting AI airport major city request")
+
+	if s.apiKey == "" {
+		reqLogger.Error().Msg("OpenRouter API key is not configured")
+		return nil, fmt.Errorf("OpenRouter API key is not configured")
+	}
+
+	// Create the prompt for determining major city
+	prompt := s.queryBuilder.CreateAirportMajorCityPrompt(airportName, regionName)
+	reqLogger.Debug().Int("prompt_length", len(prompt)).Msg("Generated AI prompt")
+
+	// Prepare the request
+	request := OpenRouterRequest{
+		Model: s.model,
+		Messages: []Message{
+			{
+				Role:    "system",
+				Content: s.queryBuilder.GetAirportMajorCitySystemMessage(),
+			},
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+	}
+
+	// Make the API call
+	reqLogger.Debug().Str("model", s.model).Msg("Making OpenRouter API request")
+	apiStart := time.Now()
+
+	resp, err := s.client.R().
+		SetHeader("Authorization", "Bearer "+s.apiKey).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("HTTP-Referer", "https://places-api.com").
+		SetHeader("X-Title", "Places API").
+		SetBody(request).
+		Post(s.baseURL + "/chat/completions")
+
+	apiDuration := time.Since(apiStart)
+
+	if err != nil {
+		reqLogger.Error().
+			Err(err).
+			Dur("duration", apiDuration).
+			Str("model", s.model).
+			Msg("OpenRouter API request failed")
+
+		// Check if it's a timeout error
+		if apiDuration >= 120*time.Second {
+			return nil, fmt.Errorf("API request timed out after %v - consider using a faster model or increasing timeout: %w", apiDuration, err)
+		}
+		return nil, fmt.Errorf("failed to make API request: %w", err)
+	}
+
+	reqLogger.LogAPICall("openrouter", "/chat/completions", "POST", resp.StatusCode(), apiDuration)
+
+	if resp.StatusCode() != 200 {
+		reqLogger.Error().Int("status_code", resp.StatusCode()).Str("response", resp.String()).Msg("OpenRouter API returned error")
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode(), resp.String())
+	}
+
+	// Parse the response
+	var openRouterResp OpenRouterResponse
+	if err := json.Unmarshal(resp.Body(), &openRouterResp); err != nil {
+		reqLogger.Error().Err(err).Msg("Failed to parse OpenRouter API response")
+		return nil, fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	if len(openRouterResp.Choices) == 0 {
+		reqLogger.Error().Msg("No choices returned from OpenRouter API")
+		return nil, fmt.Errorf("no choices returned from API")
+	}
+
+	// Log token usage
+	reqLogger.Info().
+		Int("prompt_tokens", openRouterResp.Usage.PromptTokens).
+		Int("completion_tokens", openRouterResp.Usage.CompletionTokens).
+		Int("total_tokens", openRouterResp.Usage.TotalTokens).
+		Msg("OpenRouter API token usage")
+
+	// Extract the content from the first choice
+	content := openRouterResp.Choices[0].Message.Content
+	reqLogger.Debug().Int("response_length", len(content)).Msg("Received AI response")
+
+	// Strip markdown code fences if present (AI sometimes returns JSON wrapped in ```)
+	content = stripMarkdownCodeFences(content)
+
+	// Parse the JSON response
+	var majorCityResp types.AirportMajorCityResponse
+	if err := json.Unmarshal([]byte(content), &majorCityResp); err != nil {
+		// Log the raw content for debugging
+		reqLogger.Error().Err(err).Str("raw_content", content).Msg("Failed to parse airport major city response JSON")
+		return nil, fmt.Errorf("failed to parse airport major city response: %w", err)
+	}
+
+	// Log success metrics
+	totalDuration := time.Since(start)
+
+	reqLogger.Info().
+		Str("major_city", majorCityResp.MajorCity).
+		Str("country", majorCityResp.Country).
+		Float64("confidence", majorCityResp.Confidence).
+		Float64("total_duration", totalDuration.Seconds()).
+		Msg("Successfully determined airport major city from AI")
+
+	return &majorCityResp, nil
+}
+
 // stripMarkdownCodeFences removes markdown code fence markers (```) from the content
 // This handles cases where AI models return JSON wrapped in markdown code blocks
 func stripMarkdownCodeFences(content string) string {

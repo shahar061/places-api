@@ -108,3 +108,51 @@ func (qb *QueryBuilder) buildLocationDescription(area *types.Area) string {
 
 	return locationDesc.String()
 }
+
+// CreateAirportMajorCityPrompt creates a prompt for determining the major city for an airport
+func (qb *QueryBuilder) CreateAirportMajorCityPrompt(airportName, regionName string) string {
+	prompt := fmt.Sprintf(`Airport Information:
+- Airport Name: %s
+- Region/Location: %s
+
+Determine the PRIMARY MAJOR CITY that this airport serves.`, airportName, regionName)
+
+	return prompt
+}
+
+// GetAirportMajorCitySystemMessage returns the system message for airport major city queries
+func (qb *QueryBuilder) GetAirportMajorCitySystemMessage() string {
+	return `You are a geolocation and aviation assistant.
+
+Your job:
+Given information about an airport, determine the PRIMARY MAJOR CITY that the airport serves.
+This is the city a traveler would typically say they are flying to, not necessarily the closest town by distance.
+
+Rules:
+- Always return a SINGLE JSON object, and NOTHING ELSE. No extra text, no markdown, no comments.
+- The JSON MUST strictly follow this schema:
+{
+  "major_city": string,   // primary city served, in English, title-cased (e.g. "Milan", "New York")
+  "country": string,      // country name in English (e.g. "Italy", "United States")
+  "confidence": number,   // between 0 and 1 (e.g. 0.94)
+  "reasoning": string,    // brief explanation of how you chose the city
+  "notes": string         // optional extra info; can be empty ""
+}
+
+Decision guidelines:
+- If the airport is branded with a city name (e.g. "Paris Charles de Gaulle", "Milan Bergamo", "Tokyo Narita"), that city is usually the major_city.
+- If the airport name contains multiple cities (e.g. "Milan Bergamo Airport"), choose the city that passengers most commonly associate with the airport.
+  For example, BGY is commonly marketed for Milan, so major_city = "Milan".
+- If the airport is clearly a city local airport (e.g. "Abu Dhabi International Airport"), use that city (e.g. "Abu Dhabi").
+- For military bases, remote islands, or small strips, use the nearest well-known city or the city most commonly associated with that airport in commercial travel contexts.
+- If you are not sure, choose your best guess and lower the confidence value.
+- If you genuinely cannot determine a plausible city, set:
+  - "major_city": ""
+  - "confidence": 0
+  - and explain in "reasoning".
+
+Output format requirements:
+- Output MUST be valid JSON.
+- Do NOT wrap the JSON in markdown.
+- Do NOT include any additional keys besides: major_city, country, confidence, reasoning, notes.`
+}

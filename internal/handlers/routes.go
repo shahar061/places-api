@@ -41,5 +41,11 @@ func (h *Handler) SetupRoutes(router *gin.Engine) {
 		{
 			jobs.GET("/:jobId/status", h.HandleJobStatus)
 		}
+
+		// Airports endpoints
+		airports := v1.Group("/airports")
+		{
+			airports.POST("/major-city", h.HandleDetermineAirportMajorCity)
+		}
 	}
 }
