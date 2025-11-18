@@ -435,11 +435,12 @@ func (h *Handler) HandleSearchPlaceByTextQuery(c *gin.Context) {
 
 // HandleDetermineAirportMajorCity handles POST /v1/airports/major-city
 // @Summary Determine major city for an airport
-// @Description Determine the primary major city that an airport serves using AI
+// @Description Determine the primary major city that an airport serves using AI, with optional location validation
 // @Tags airports
 // @Accept json
 // @Produce json
 // @Param request body types.AirportMajorCityRequest true "Airport information"
+// @Param validate query bool false "Validate location using Supabase edge function (default: true)"
 // @Success 200 {object} types.AirportMajorCityResponse "Major city determination result"
 // @Failure 400 {object} map[string]string "Bad request"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -471,6 +472,9 @@ func (h *Handler) HandleDetermineAirportMajorCity(c *gin.Context) {
 		return
 	}
 
+	// Check if validation is requested (default: true)
+	shouldValidate := c.DefaultQuery("validate", "true") == "true"
+
 	// Check if AI service is available
 	if h.aiService == nil {
 		h.logger.Error().Msg("AI service is not available")
@@ -484,6 +488,7 @@ func (h *Handler) HandleDetermineAirportMajorCity(c *gin.Context) {
 	h.logger.Info().
 		Str("airport_name", req.AirportName).
 		Str("region_name", req.RegionName).
+		Bool("validate", shouldValidate).
 		Msg("Determining airport major city")
 
 	result, err := h.aiService.GetAirportMajorCity(req.AirportName, req.RegionName)
@@ -500,11 +505,40 @@ func (h *Handler) HandleDetermineAirportMajorCity(c *gin.Context) {
 		return
 	}
 
+	// Validate location using Supabase edge function if requested and major_city is not empty
+	if shouldValidate && result.MajorCity != "" && h.supabase != nil {
+		h.logger.Info().
+			Str("major_city", result.MajorCity).
+			Msg("Validating location with Supabase edge function")
+
+		locations, err := h.supabase.FindLocation(result.MajorCity, 1)
+		if err != nil {
+			// Log warning but don't fail the request
+			h.logger.Warn().
+				Err(err).
+				Str("major_city", result.MajorCity).
+				Msg("Failed to validate location, continuing without validation")
+		} else if len(locations) > 0 {
+			// Use the first (best) match
+			result.ValidatedLocation = &locations[0]
+			h.logger.Info().
+				Str("major_city", result.MajorCity).
+				Str("validated_name", locations[0].Name).
+				Str("location_id", locations[0].ID).
+				Msg("Successfully validated location")
+		} else {
+			h.logger.Warn().
+				Str("major_city", result.MajorCity).
+				Msg("No matching location found in validation")
+		}
+	}
+
 	h.logger.Info().
 		Str("airport_name", req.AirportName).
 		Str("major_city", result.MajorCity).
 		Str("country", result.Country).
 		Float64("confidence", result.Confidence).
+		Bool("validated", result.ValidatedLocation != nil).
 		Msg("Successfully determined airport major city")
 
 	// Return the result

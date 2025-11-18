@@ -427,9 +427,24 @@ type AirportMajorCityRequest struct {
 }
 
 type AirportMajorCityResponse struct {
-	MajorCity  string  `json:"major_city"`
-	Country    string  `json:"country"`
-	Confidence float64 `json:"confidence"`
-	Reasoning  string  `json:"reasoning"`
-	Notes      string  `json:"notes"`
+	MajorCity         string             `json:"major_city"`
+	Country           string             `json:"country"`
+	Confidence        float64            `json:"confidence"`
+	Reasoning         string             `json:"reasoning"`
+	Notes             string             `json:"notes"`
+	ValidatedLocation *ValidatedLocation `json:"validated_location,omitempty"`
+}
+
+// ValidatedLocation represents the validated location data from Supabase
+type ValidatedLocation struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	LocationType string  `json:"location_type"`
+	Country      string  `json:"country"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
+	CountryCode  string  `json:"country_code"`
+	Popularity   int     `json:"popularity"`
+	StateCode    string  `json:"state_code"`
+	StateName    string  `json:"state_name"`
 }

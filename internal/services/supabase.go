@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -635,4 +636,58 @@ func (s *SupabaseService) mapToAreaRefresh(data map[string]interface{}) (*types.
 	}
 
 	return refresh, nil
+}
+
+// FindLocation calls the Supabase edge function to find and validate a location
+func (s *SupabaseService) FindLocation(term string, limit int) ([]types.ValidatedLocation, error) {
+	if s.httpClient == nil {
+		return nil, fmt.Errorf("supabase service not initialized")
+	}
+
+	// Extract base URL (remove /rest/v1 suffix if present)
+	baseURL := strings.TrimSuffix(s.baseURL, "/rest/v1")
+
+	// Build the edge function URL
+	functionURL := fmt.Sprintf("%s/functions/v1/locations-finder", baseURL)
+
+	// Prepare request body
+	requestBody := map[string]interface{}{
+		"term":  strings.ToLower(strings.TrimSpace(term)),
+		"limit": limit,
+	}
+
+	bodyJSON, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %v", err)
+	}
+
+	// Create request
+	req, err := http.NewRequest("POST", functionURL, strings.NewReader(string(bodyJSON)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Execute request
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("edge function returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse response
+	var locations []types.ValidatedLocation
+	if err := json.NewDecoder(resp.Body).Decode(&locations); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	return locations, nil
 }
