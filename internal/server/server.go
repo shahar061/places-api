@@ -47,6 +47,9 @@ func New(cfg *config.Config) *Server {
 	// Initialize Photon service
 	photonService := services.NewPhotonService()
 
+	// Initialize LocationIQ service (optional, for fallback geocoding)
+	locationiqService := services.NewLocationIQService(cfg.LocationIQ.APIKey)
+
 	// Initialize NATS service
 	var natsService *services.NATSService
 	var jobWorker *worker.Worker
@@ -61,7 +64,7 @@ func New(cfg *config.Config) *Server {
 		} else {
 			// Initialize job service and worker
 			jobService := services.NewJobService(supabaseService, natsService)
-			jobWorker = worker.NewWorker(jobService, natsService, supabaseService, aiService, photonService)
+			jobWorker = worker.NewWorker(jobService, natsService, supabaseService, aiService, photonService, locationiqService)
 		}
 	} else {
 		log.Printf("NATS URL not configured. Set PLACES_API_NATS_URL or NATS_URL environment variable to enable background job processing.")

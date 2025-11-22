@@ -101,6 +101,22 @@ func (n *NATSService) PublishFetchAttractionsJob(msg *types.FetchAttractionsMess
 	return nil
 }
 
+// PublishPlanTripJob publishes a job to plan a trip itinerary
+func (n *NATSService) PublishPlanTripJob(msg *types.PlanTripMessage) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %v", err)
+	}
+
+	_, err = n.js.Publish(types.SubjectPlanTrip, data)
+	if err != nil {
+		return fmt.Errorf("failed to publish plan trip job: %v", err)
+	}
+
+	fmt.Printf("Published plan trip job for trip: %s (job ID: %s)\n", msg.TripID, msg.JobID)
+	return nil
+}
+
 // PublishJobStatus publishes a job status update
 func (n *NATSService) PublishJobStatus(msg *types.JobStatusMessage) error {
 	data, err := json.Marshal(msg)
@@ -163,6 +179,57 @@ func (n *NATSService) SubscribeFetchAttractions(handler func(*types.FetchAttract
 	}()
 
 	fmt.Printf("Subscribed to fetch attractions jobs\n")
+	return nil
+}
+
+// SubscribePlanTrip creates a durable consumer for plan trip jobs
+func (n *NATSService) SubscribePlanTrip(handler func(*types.PlanTripMessage) error) error {
+	// Subscribe with durable consumer configuration
+	// Longer timeout for AI processing (60 seconds)
+	sub, err := n.js.PullSubscribe(types.SubjectPlanTrip, types.ConsumerPlanTrip,
+		nats.AckExplicit(),
+		nats.MaxDeliver(3),
+		nats.AckWait(60*time.Second))
+	if err != nil {
+		return fmt.Errorf("failed to create pull subscription: %v", err)
+	}
+
+	// Start processing messages in a goroutine
+	go func() {
+		for {
+			// Fetch messages
+			msgs, err := sub.Fetch(1, nats.MaxWait(5*time.Second))
+			if err != nil {
+				if err == nats.ErrTimeout {
+					continue // No messages available, continue polling
+				}
+				fmt.Printf("Error fetching plan trip messages: %v\n", err)
+				continue
+			}
+
+			for _, msg := range msgs {
+				// Parse message
+				var planMsg types.PlanTripMessage
+				if err := json.Unmarshal(msg.Data, &planMsg); err != nil {
+					fmt.Printf("Error unmarshaling plan trip message: %v\n", err)
+					msg.Nak()
+					continue
+				}
+
+				// Process message
+				if err := handler(&planMsg); err != nil {
+					fmt.Printf("Error processing plan trip job: %v\n", err)
+					msg.Nak()
+					continue
+				}
+
+				// Acknowledge successful processing
+				msg.Ack()
+			}
+		}
+	}()
+
+	fmt.Printf("Subscribed to plan trip jobs\n")
 	return nil
 }
 

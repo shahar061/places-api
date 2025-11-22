@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"places_api/internal/types"
 	"strings"
+	"time"
 )
 
 // QueryBuilder handles the construction of AI prompts and queries
@@ -155,4 +156,209 @@ Output format requirements:
 - Output MUST be valid JSON.
 - Do NOT wrap the JSON in markdown.
 - Do NOT include any additional keys besides: major_city, country, confidence, reasoning, notes.`
+}
+
+// CreateTripItineraryPrompt creates an optimized prompt for generating a full trip itinerary
+func (qb *QueryBuilder) CreateTripItineraryPrompt(trip *types.Trip, preferences *types.ItineraryPreferences) string {
+	// Build destinations summary
+	destSummary := qb.buildDestinationsSummary(trip.Destinations)
+
+	// Calculate trip duration
+	tripDays := qb.calculateTripDays(trip.StartDate, trip.EndDate)
+
+	// Build preferences context
+	prefsContext := qb.buildPreferencesContext(preferences)
+
+	prompt := fmt.Sprintf(`Generate a detailed day-by-day itinerary for this trip:
+
+TRIP: %s
+DATES: %s to %s (%d days)
+DESTINATIONS: %s
+
+TRAVELER PREFERENCES:
+%s
+
+REQUIREMENTS:
+- Create %d daily plans
+- Balance %s activities with %s pace
+- Consider %s budget
+- Include must-visit: %s
+- Max %d activities/day
+%s
+
+OUTPUT ONLY valid JSON (no markdown, no extra text):
+{
+  "itinerary": {
+    "summary": "1-sentence trip overview",
+    "days": [
+      {
+        "date": "YYYY-MM-DD",
+        "destination": "city name",
+        "activities": [
+          {
+            "name": "activity name",
+            "description": "brief description (max 100 chars)",
+            "start_time": "HH:MM",
+            "end_time": "HH:MM",
+            "location_name": "place name, city",
+            "attraction_type": "attraction|restaurant|cafe|hotel|transport|other",
+            "duration_minutes": number,
+            "notes": "practical tip (optional)"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+Keep descriptions concise. Focus on well-known places.`,
+		trip.Name,
+		trip.StartDate,
+		trip.EndDate,
+		tripDays,
+		destSummary,
+		prefsContext,
+		tripDays,
+		qb.formatInterests(preferences.Interests),
+		preferences.Pace,
+		preferences.BudgetLevel,
+		qb.formatMustVisit(preferences.MustVisitAttractions),
+		qb.getMaxActivities(preferences.MaxActivitiesPerDay, preferences.Pace),
+		qb.buildInclusionFlags(preferences),
+	)
+
+	return prompt
+}
+
+// GetTripItinerarySystemMessage returns the system message for itinerary generation
+func (qb *QueryBuilder) GetTripItinerarySystemMessage() string {
+	return `You are an expert travel planner. Create realistic, practical itineraries.
+
+RULES:
+1. Output ONLY valid JSON (no markdown, no comments)
+2. Keep descriptions under 100 characters
+3. Use realistic timing (account for travel, meals, breaks)
+4. Suggest well-known, accessible places
+5. Balance activity types throughout the day
+6. Consider opening hours and typical visit durations
+7. Group activities by proximity when possible
+8. Include practical tips in notes when relevant
+
+Quality over quantity. Better to have fewer well-planned activities than an overwhelming schedule.`
+}
+
+// Helper functions for building the prompt
+
+func (qb *QueryBuilder) buildDestinationsSummary(destinations []types.TripDestination) string {
+	if len(destinations) == 0 {
+		return "No specific destinations"
+	}
+
+	var parts []string
+	for _, dest := range destinations {
+		// Include location name and optional date range
+		destInfo := dest.DisplayName
+		if dest.Country != nil && *dest.Country != "" {
+			destInfo += fmt.Sprintf(", %s", *dest.Country)
+		}
+		if dest.StartDayIndex != nil && dest.EndDayIndex != nil {
+			destInfo += fmt.Sprintf(" (days %d-%d)", *dest.StartDayIndex+1, *dest.EndDayIndex+1)
+		}
+		parts = append(parts, destInfo)
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+func (qb *QueryBuilder) calculateTripDays(startDate, endDate string) int {
+	// Simple day calculation (you may want to use time.Parse for accuracy)
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return 1
+	}
+	end, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return 1
+	}
+	days := int(end.Sub(start).Hours()/24) + 1
+	if days < 1 {
+		return 1
+	}
+	return days
+}
+
+func (qb *QueryBuilder) buildPreferencesContext(prefs *types.ItineraryPreferences) string {
+	var context strings.Builder
+
+	context.WriteString(fmt.Sprintf("- Style: %s\n", prefs.TravelStyle))
+	context.WriteString(fmt.Sprintf("- Pace: %s\n", prefs.Pace))
+	context.WriteString(fmt.Sprintf("- Budget: %s\n", prefs.BudgetLevel))
+
+	if len(prefs.Interests) > 0 {
+		context.WriteString(fmt.Sprintf("- Interests: %s\n", strings.Join(prefs.Interests, ", ")))
+	}
+
+	if prefs.AdditionalNotes != nil && *prefs.AdditionalNotes != "" {
+		// Truncate if too long to save tokens
+		notes := *prefs.AdditionalNotes
+		if len(notes) > 200 {
+			notes = notes[:200] + "..."
+		}
+		context.WriteString(fmt.Sprintf("- Notes: %s\n", notes))
+	}
+
+	return context.String()
+}
+
+func (qb *QueryBuilder) formatInterests(interests []string) string {
+	if len(interests) == 0 {
+		return "varied"
+	}
+	return strings.Join(interests, ", ")
+}
+
+func (qb *QueryBuilder) formatMustVisit(attractions []string) string {
+	if len(attractions) == 0 {
+		return "none specified"
+	}
+	// Limit to first 5 to save tokens
+	if len(attractions) > 5 {
+		return strings.Join(attractions[:5], ", ") + "..."
+	}
+	return strings.Join(attractions, ", ")
+}
+
+func (qb *QueryBuilder) getMaxActivities(maxFromPrefs *int, pace string) int {
+	if maxFromPrefs != nil {
+		return *maxFromPrefs
+	}
+	// Default based on pace
+	switch pace {
+	case "relaxed":
+		return 3
+	case "fast":
+		return 6
+	default: // moderate
+		return 4
+	}
+}
+
+func (qb *QueryBuilder) buildInclusionFlags(prefs *types.ItineraryPreferences) string {
+	var flags []string
+
+	if !prefs.IncludeHotels {
+		flags = append(flags, "- Exclude hotel recommendations")
+	}
+	if !prefs.IncludeRestaurants {
+		flags = append(flags, "- Exclude restaurant suggestions")
+	}
+	if !prefs.IncludeActivities {
+		flags = append(flags, "- Exclude activity suggestions")
+	}
+
+	if len(flags) == 0 {
+		return ""
+	}
+
+	return "\n" + strings.Join(flags, "\n")
 }

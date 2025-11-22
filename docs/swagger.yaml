@@ -67,6 +67,8 @@ definitions:
         type: string
       reasoning:
         type: string
+      validated_location:
+        $ref: '#/definitions/types.ValidatedLocation'
     type: object
   types.Area:
     properties:
@@ -150,6 +152,54 @@ definitions:
     - JobStatusRunning
     - JobStatusCompleted
     - JobStatusFailed
+  types.TripPlanRequest:
+    properties:
+      preferences_id:
+        type: string
+      trip_id:
+        type: string
+    required:
+    - preferences_id
+    - trip_id
+    type: object
+  types.TripPlanResponse:
+    properties:
+      generated_at:
+        type: string
+      itinerary:
+        additionalProperties: true
+        description: Placeholder for AI-generated itinerary
+        type: object
+      message:
+        type: string
+      status:
+        type: string
+      trip_id:
+        type: string
+    type: object
+  types.ValidatedLocation:
+    properties:
+      country:
+        type: string
+      country_code:
+        type: string
+      id:
+        type: string
+      latitude:
+        type: number
+      location_type:
+        type: string
+      longitude:
+        type: number
+      name:
+        type: string
+      popularity:
+        type: integer
+      state_code:
+        type: string
+      state_name:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact:
@@ -185,7 +235,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Determine the primary major city that an airport serves using AI
+      description: Determine the primary major city that an airport serves using AI,
+        with optional location validation
       parameters:
       - description: Airport information
         in: body
@@ -193,6 +244,10 @@ paths:
         required: true
         schema:
           $ref: '#/definitions/types.AirportMajorCityRequest'
+      - description: 'Validate location using Supabase edge function (default: true)'
+        in: query
+        name: validate
+        type: boolean
       produces:
       - application/json
       responses:
@@ -394,6 +449,53 @@ paths:
       summary: Get top places for area
       tags:
       - places
+  /v1/trips/plan:
+    post:
+      consumes:
+      - application/json
+      description: Generate an AI-powered itinerary for a trip based on trip details
+        and user preferences
+      parameters:
+      - description: Trip planning request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.TripPlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Trip itinerary generated successfully
+          schema:
+            $ref: '#/definitions/types.TripPlanResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Trip or preferences not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a trip itinerary using AI
+      tags:
+      - trips
 schemes:
 - http
 - https

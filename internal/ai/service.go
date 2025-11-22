@@ -312,6 +312,125 @@ func (s *Service) GetAirportMajorCity(airportName, regionName string) (*types.Ai
 	return &majorCityResp, nil
 }
 
+// GenerateTripItinerary generates a complete trip itinerary using AI
+func (s *Service) GenerateTripItinerary(trip *types.Trip, preferences *types.ItineraryPreferences) (*types.TripItineraryResponse, error) {
+	start := time.Now()
+
+	s.logger.Info().
+		Str("trip_id", trip.ID).
+		Str("trip_name", trip.Name).
+		Msg("Starting AI itinerary generation")
+
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("OpenRouter API key is not configured")
+	}
+
+	// Create the prompt
+	prompt := s.queryBuilder.CreateTripItineraryPrompt(trip, preferences)
+	s.logger.Debug().Int("prompt_length", len(prompt)).Msg("Generated AI prompt")
+
+	// Prepare the request
+	request := OpenRouterRequest{
+		Model: s.model,
+		Messages: []Message{
+			{
+				Role:    "system",
+				Content: s.queryBuilder.GetTripItinerarySystemMessage(),
+			},
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+	}
+
+	// Make the API call
+	s.logger.Debug().Str("model", s.model).Msg("Making OpenRouter API request")
+	apiStart := time.Now()
+
+	resp, err := s.client.R().
+		SetHeader("Authorization", "Bearer "+s.apiKey).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("HTTP-Referer", "https://places-api.com").
+		SetHeader("X-Title", "Places API").
+		SetBody(request).
+		Post(s.baseURL + "/chat/completions")
+
+	apiDuration := time.Since(apiStart)
+
+	if err != nil {
+		s.logger.Error().
+			Err(err).
+			Dur("duration", apiDuration).
+			Msg("OpenRouter API request failed")
+		return nil, fmt.Errorf("failed to make API request: %w", err)
+	}
+
+	s.logger.Info().
+		Int("status_code", resp.StatusCode()).
+		Dur("duration", apiDuration).
+		Msg("OpenRouter API call completed")
+
+	if resp.StatusCode() != 200 {
+		s.logger.Error().
+			Int("status_code", resp.StatusCode()).
+			Str("response", resp.String()).
+			Msg("OpenRouter API returned error")
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode(), resp.String())
+	}
+
+	// Parse the response
+	var openRouterResp OpenRouterResponse
+	if err := json.Unmarshal(resp.Body(), &openRouterResp); err != nil {
+		s.logger.Error().Err(err).Msg("Failed to parse OpenRouter API response")
+		return nil, fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	if len(openRouterResp.Choices) == 0 {
+		s.logger.Error().Msg("No choices returned from OpenRouter API")
+		return nil, fmt.Errorf("no choices returned from API")
+	}
+
+	// Log token usage
+	s.logger.Info().
+		Int("prompt_tokens", openRouterResp.Usage.PromptTokens).
+		Int("completion_tokens", openRouterResp.Usage.CompletionTokens).
+		Int("total_tokens", openRouterResp.Usage.TotalTokens).
+		Msg("OpenRouter API token usage")
+
+	// Extract the content
+	content := openRouterResp.Choices[0].Message.Content
+	s.logger.Debug().Int("response_length", len(content)).Msg("Received AI response")
+
+	// Strip markdown code fences if present
+	content = stripMarkdownCodeFences(content)
+
+	// Parse the JSON response
+	var itineraryResp types.TripItineraryResponse
+	if err := json.Unmarshal([]byte(content), &itineraryResp); err != nil {
+		s.logger.Error().
+			Err(err).
+			Str("raw_content", content).
+			Msg("Failed to parse itinerary response JSON")
+		return nil, fmt.Errorf("failed to parse itinerary response: %w", err)
+	}
+
+	// Log success metrics
+	totalDuration := time.Since(start)
+	totalActivities := 0
+	for _, day := range itineraryResp.Itinerary.Days {
+		totalActivities += len(day.Activities)
+	}
+
+	s.logger.Info().
+		Int("days_count", len(itineraryResp.Itinerary.Days)).
+		Int("total_activities", totalActivities).
+		Float64("total_duration", totalDuration.Seconds()).
+		Msg("Successfully generated trip itinerary")
+
+	return &itineraryResp, nil
+}
+
 // stripMarkdownCodeFences removes markdown code fence markers (```) from the content
 // This handles cases where AI models return JSON wrapped in markdown code blocks
 func stripMarkdownCodeFences(content string) string {

@@ -9,21 +9,23 @@ import (
 
 // Worker handles background job processing
 type Worker struct {
-	jobService    *services.JobService
-	natsService   *services.NATSService
-	supabase      *services.SupabaseService
-	aiService     *ai.Service
-	photonService *services.PhotonService
+	jobService        *services.JobService
+	natsService       *services.NATSService
+	supabase          *services.SupabaseService
+	aiService         *ai.Service
+	photonService     *services.PhotonService
+	locationiqService *services.LocationIQService
 }
 
 // NewWorker creates a new worker instance
-func NewWorker(jobService *services.JobService, natsService *services.NATSService, supabase *services.SupabaseService, aiService *ai.Service, photonService *services.PhotonService) *Worker {
+func NewWorker(jobService *services.JobService, natsService *services.NATSService, supabase *services.SupabaseService, aiService *ai.Service, photonService *services.PhotonService, locationiqService *services.LocationIQService) *Worker {
 	return &Worker{
-		jobService:    jobService,
-		natsService:   natsService,
-		supabase:      supabase,
-		aiService:     aiService,
-		photonService: photonService,
+		jobService:        jobService,
+		natsService:       natsService,
+		supabase:          supabase,
+		aiService:         aiService,
+		photonService:     photonService,
+		locationiqService: locationiqService,
 	}
 }
 
@@ -35,6 +37,12 @@ func (w *Worker) Start() error {
 	err := w.natsService.SubscribeFetchAttractions(w.processFetchAttractionsJob)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to fetch attractions jobs: %v", err)
+	}
+
+	// Subscribe to plan trip jobs
+	err = w.natsService.SubscribePlanTrip(w.processPlanTripJob)
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to plan trip jobs: %v", err)
 	}
 
 	// Subscribe to job status updates (for logging/monitoring)
@@ -134,6 +142,154 @@ func (*Worker) buildAddress(locationData *services.PhotonLocation, attractions [
 	} else {
 		attractions[i].Address = ""
 	}
+}
+
+// processPlanTripJob processes a trip planning job
+func (w *Worker) processPlanTripJob(msg *types.PlanTripMessage) error {
+	fmt.Printf("📋 Processing plan trip job: %s for trip: %s\n", msg.JobID, msg.TripID)
+
+	// Update job status to running - fetching trip details
+	err := w.jobService.UpdateJobProgress(msg.JobID, 5, "Fetching trip details", "fetching_trip")
+	if err != nil {
+		fmt.Printf("Error updating job progress: %v\n", err)
+		return err
+	}
+
+	// Fetch trip with destinations and locations via GraphQL
+	trip, err := w.supabase.GetTripByID(msg.TripID)
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to fetch trip: %v", err)
+		fmt.Printf("Error fetching trip: %v\n", err)
+		if markErr := w.jobService.MarkJobFailed(msg.JobID, errMsg); markErr != nil {
+			fmt.Printf("Error marking job as failed: %v\n", markErr)
+		}
+		return fmt.Errorf("trip not found: %w", err)
+	}
+
+	fmt.Printf("✅ Fetched trip: %s (%s to %s) with %d destinations\n",
+		trip.Name, trip.StartDate, trip.EndDate, len(trip.Destinations))
+
+	// Update progress - fetching preferences
+	err = w.jobService.UpdateJobProgress(msg.JobID, 10, "Fetching itinerary preferences", "fetching_preferences")
+	if err != nil {
+		fmt.Printf("Error updating job progress: %v\n", err)
+	}
+
+	// Fetch preferences
+	preferences, err := w.supabase.GetItineraryPreferencesByID(msg.PreferencesID)
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to fetch preferences: %v", err)
+		fmt.Printf("Error fetching preferences: %v\n", err)
+		if markErr := w.jobService.MarkJobFailed(msg.JobID, errMsg); markErr != nil {
+			fmt.Printf("Error marking job as failed: %v\n", markErr)
+		}
+		return fmt.Errorf("preferences not found: %w", err)
+	}
+
+	fmt.Printf("✅ Fetched preferences: Style=%s, Pace=%s, Budget=%s\n",
+		preferences.TravelStyle, preferences.Pace, preferences.BudgetLevel)
+
+	// Update progress - starting AI generation
+	err = w.jobService.UpdateJobProgress(msg.JobID, 20, "Starting itinerary generation", "preparing")
+	if err != nil {
+		fmt.Printf("Error updating job progress: %v\n", err)
+	}
+
+	// Update progress
+	err = w.jobService.UpdateJobProgress(msg.JobID, 50, "Generating itinerary with AI", "generating")
+	if err != nil {
+		fmt.Printf("Error updating job progress: %v\n", err)
+	}
+
+	// Generate actual itinerary using AI
+	itinerary, err := w.aiService.GenerateTripItinerary(trip, preferences)
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to generate itinerary with AI: %v", err)
+		fmt.Printf("❌ %s\n", errMsg)
+		if markErr := w.jobService.MarkJobFailed(msg.JobID, errMsg); markErr != nil {
+			fmt.Printf("Error marking job as failed: %v\n", markErr)
+		}
+		return err
+	}
+
+	fmt.Printf("🤖 AI generated itinerary: %d days, %d total activities\n",
+		len(itinerary.Itinerary.Days),
+		func() int {
+			total := 0
+			for _, day := range itinerary.Itinerary.Days {
+				total += len(day.Activities)
+			}
+			return total
+		}())
+
+	// Update progress - enriching locations
+	err = w.jobService.UpdateJobProgress(msg.JobID, 70, "Enriching locations with accurate coordinates", "enriching")
+	if err != nil {
+		fmt.Printf("Error updating job progress: %v\n", err)
+	}
+
+	// Enrich activities with tiered geocoding services
+	// Photon (free) → LocationIQ (free tier) → Save without coords
+	photonSuccess, locationiqSuccess, totalActivities := w.photonService.EnrichItineraryWithFallback(itinerary, w.locationiqService)
+	totalEnriched := photonSuccess + locationiqSuccess
+
+	fmt.Printf("📍 Geocoding results:\n")
+	fmt.Printf("   • Photon (free): %d/%d activities\n", photonSuccess, totalActivities)
+	if w.locationiqService != nil {
+		fmt.Printf("   • LocationIQ (fallback): %d/%d activities\n", locationiqSuccess, totalActivities)
+		fmt.Printf("   • Total enriched: %d/%d (%.1f%%)\n", totalEnriched, totalActivities, float64(totalEnriched)/float64(totalActivities)*100)
+	} else {
+		fmt.Printf("   • Total enriched: %d/%d (%.1f%%)\n", totalEnriched, totalActivities, float64(totalEnriched)/float64(totalActivities)*100)
+		fmt.Printf("   • LocationIQ not configured (fallback disabled)\n")
+	}
+
+	if totalEnriched == 0 && totalActivities > 0 {
+		fmt.Printf("⚠️  Warning: No activities could be enriched with location data\n")
+	} else if totalEnriched < totalActivities {
+		fmt.Printf("⚠️  Warning: %d activities could not be enriched (will save without coordinates)\n", totalActivities-totalEnriched)
+	}
+
+	// Update progress
+	err = w.jobService.UpdateJobProgress(msg.JobID, 90, "Saving itinerary to database", "saving")
+	if err != nil {
+		fmt.Printf("Error updating job progress: %v\n", err)
+	}
+
+	// Save activities to database
+	savedCount, pointCount, areaCount, err := w.supabase.SaveTripActivities(msg.TripID, trip, itinerary)
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to save itinerary: %v", err)
+		fmt.Printf("❌ %s\n", errMsg)
+
+		// Mark preferences as failed
+		if updateErr := w.supabase.UpdatePreferencesStatus(msg.PreferencesID, "failed", &errMsg); updateErr != nil {
+			fmt.Printf("Error updating preferences status: %v\n", updateErr)
+		}
+
+		// Mark job as failed
+		if markErr := w.jobService.MarkJobFailed(msg.JobID, errMsg); markErr != nil {
+			fmt.Printf("Error marking job as failed: %v\n", markErr)
+		}
+		return err
+	}
+
+	fmt.Printf("💾 Saved %d activities (%d point, %d area, %d other)\n",
+		savedCount, pointCount, areaCount, savedCount-pointCount-areaCount)
+
+	// Update preferences status to "completed"
+	if err := w.supabase.UpdatePreferencesStatus(msg.PreferencesID, "completed", nil); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to update preferences status: %v\n", err)
+		// Don't fail the job for this - data is already saved
+	}
+
+	// Complete job
+	if err := w.jobService.CompleteJob(msg.JobID, savedCount); err != nil {
+		fmt.Printf("Error completing job: %v\n", err)
+		return err
+	}
+
+	fmt.Printf("✅ Successfully processed plan trip job for trip: %s\n", msg.TripID)
+	return nil
 }
 
 // processJobStatusUpdate handles job status updates for logging/monitoring

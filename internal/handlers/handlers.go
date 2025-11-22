@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"places_api/internal/config"
 	"places_api/internal/logger"
@@ -543,4 +544,132 @@ func (h *Handler) HandleDetermineAirportMajorCity(c *gin.Context) {
 
 	// Return the result
 	c.JSON(http.StatusOK, result)
+}
+
+// HandlePlanTrip handles POST /v1/trips/plan
+// @Summary Create a trip itinerary using AI
+// @Description Generate an AI-powered itinerary for a trip based on trip details and user preferences
+// @Tags trips
+// @Accept json
+// @Produce json
+// @Param request body types.TripPlanRequest true "Trip planning request"
+// @Success 200 {object} types.TripPlanResponse "Trip itinerary generated successfully"
+// @Failure 400 {object} map[string]string "Bad request"
+// @Failure 404 {object} map[string]string "Trip or preferences not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Failure 503 {object} map[string]string "Service unavailable"
+// @Router /v1/trips/plan [post]
+func (h *Handler) HandlePlanTrip(c *gin.Context) {
+	var req types.TripPlanRequest
+
+	// Bind and validate the request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("invalid request: %v", err),
+		})
+		return
+	}
+
+	// Validate required fields
+	if req.TripID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "trip_id is required",
+		})
+		return
+	}
+
+	if req.PreferencesID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "preferences_id is required",
+		})
+		return
+	}
+
+	// Check if NATS service is available for async job processing
+	if h.natsService == nil || h.jobService == nil {
+		h.logger.Error().Msg("NATS or Job service is not available")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Background job service is not available",
+		})
+		return
+	}
+
+	// Create a job for trip planning
+	job := &types.Job{
+		AreaKey:   fmt.Sprintf("trip_%s", req.TripID), // Use trip ID as area key
+		JobType:   types.JobTypePlanTrip,
+		Status:    types.JobStatusPending,
+		CreatedAt: time.Now(),
+		Progress:  make(map[string]interface{}),
+		Metadata: map[string]interface{}{
+			"trip_id":        req.TripID,
+			"preferences_id": req.PreferencesID,
+		},
+	}
+	job.SetProgress(0, "Trip planning job queued", "queued")
+
+	// Save job to database
+	if err := h.supabase.CreateJob(job); err != nil {
+		h.logger.Error().
+			Err(err).
+			Str("trip_id", req.TripID).
+			Msg("Failed to create job")
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create trip planning job",
+		})
+		return
+	}
+
+	h.logger.Info().
+		Str("job_id", job.ID).
+		Str("trip_id", req.TripID).
+		Str("preferences_id", req.PreferencesID).
+		Msg("Created trip planning job")
+
+	// Publish lightweight message to NATS
+	msg := &types.PlanTripMessage{
+		JobID:         job.ID,
+		TripID:        req.TripID,
+		PreferencesID: req.PreferencesID,
+		RequestedAt:   time.Now(),
+	}
+
+	if err := h.natsService.PublishPlanTripJob(msg); err != nil {
+		// Mark job as failed
+		if markErr := h.jobService.MarkJobFailed(job.ID, "Failed to queue job"); markErr != nil {
+			h.logger.Error().
+				Err(markErr).
+				Str("job_id", job.ID).
+				Msg("Failed to mark job as failed")
+		}
+
+		h.logger.Error().
+			Err(err).
+			Str("job_id", job.ID).
+			Msg("Failed to publish job to NATS")
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to queue trip planning job",
+		})
+		return
+	}
+
+	h.logger.Info().
+		Str("job_id", job.ID).
+		Str("trip_id", req.TripID).
+		Msg("Successfully queued trip planning job")
+
+	// Return job info immediately (202 Accepted for async processing)
+	c.JSON(http.StatusAccepted, gin.H{
+		"trip_id": req.TripID,
+		"status":  "queued",
+		"message": "Trip planning has been queued for processing. Check job status for progress.",
+		"job": gin.H{
+			"job_id":     job.ID,
+			"status":     job.Status,
+			"status_url": fmt.Sprintf("/v1/jobs/%s/status", job.ID),
+		},
+		"queued_at": time.Now(),
+	})
 }

@@ -10,11 +10,12 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	AI       AIConfig       `mapstructure:"ai"`
-	NATS     NATSConfig     `mapstructure:"nats"`
-	Logging  LoggingConfig  `mapstructure:"logging"`
+	Server     ServerConfig     `mapstructure:"server"`
+	Database   DatabaseConfig   `mapstructure:"database"`
+	AI         AIConfig         `mapstructure:"ai"`
+	NATS       NATSConfig       `mapstructure:"nats"`
+	Logging    LoggingConfig    `mapstructure:"logging"`
+	LocationIQ LocationIQConfig `mapstructure:"locationiq"`
 }
 
 // ServerConfig holds server-specific configuration
@@ -46,6 +47,11 @@ type LoggingConfig struct {
 	Level      string `mapstructure:"level"`
 	Format     string `mapstructure:"format"`
 	TimeFormat string `mapstructure:"timeformat"`
+}
+
+// LocationIQConfig holds LocationIQ API configuration
+type LocationIQConfig struct {
+	APIKey string `mapstructure:"api_key"`
 }
 
 // bindEnvWithFallback binds an environment variable with fallback options
@@ -142,6 +148,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	bindEnvWithFallback("logging.level", "PLACES_API_LOG_LEVEL", "LOG_LEVEL")
 	bindEnvWithFallback("logging.format", "PLACES_API_LOG_FORMAT", "LOG_FORMAT")
 	bindEnvWithFallback("logging.timeformat", "PLACES_API_LOG_TIME_FORMAT", "LOG_TIME_FORMAT")
+	bindEnvWithFallback("locationiq.api_key", "PLACES_API_LOCATIONIQ_API_KEY", "LOCATIONIQ_API_KEY")
 	fmt.Println()
 
 	// Override with standard PORT env var (used by hosting platforms)

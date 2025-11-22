@@ -38,18 +38,20 @@ func init() {
 }
 
 const (
-	areasTable         = "areas"
-	placesTable        = "places"
-	jobsTable          = "jobs"
-	areaRefreshesTable = "area_refreshes"
+	areasTable           = "areas"
+	placesTable          = "places"
+	jobsTable            = "jobs"
+	areaRefreshesTable   = "area_refreshes"
+	tripsActivitiesTable = "trips_activities"
 )
 
 // SupabaseService handles all interactions with Supabase
 type SupabaseService struct {
-	client     *postgrest.Client
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
+	client      *postgrest.Client
+	baseURL     string
+	apiKey      string
+	httpClient  *http.Client
+	TripService *TripService // Trip planner service using GraphQL
 }
 
 // NewSupabaseService creates a new Supabase service instance
@@ -87,11 +89,16 @@ func NewSupabaseService(cfg *config.DatabaseConfig) (*SupabaseService, error) {
 		"Authorization": "Bearer " + cfg.SupabaseKey,
 	})
 
+	// Initialize GraphQL client for trip planner
+	gqlClient := NewGraphQLClient(supabaseURL, cfg.SupabaseKey, httpClient)
+	tripService := NewTripService(gqlClient)
+
 	return &SupabaseService{
-		client:     client,
-		baseURL:    supabaseURL,
-		apiKey:     cfg.SupabaseKey,
-		httpClient: httpClient,
+		client:      client,
+		baseURL:     supabaseURL,
+		apiKey:      cfg.SupabaseKey,
+		httpClient:  httpClient,
+		TripService: tripService,
 	}, nil
 }
 
@@ -709,4 +716,210 @@ func (s *SupabaseService) FindLocation(term string, limit int) ([]types.Validate
 	}
 
 	return locations, nil
+}
+
+// Trip Planner Service Methods - Delegation to TripService
+
+// GetTripByID retrieves a trip by its ID from the trips table with nested destinations
+// Delegates to TripService which uses GraphQL
+func (s *SupabaseService) GetTripByID(tripID string) (*types.Trip, error) {
+	return s.TripService.GetTripByID(tripID)
+}
+
+// GetItineraryPreferencesByTripID retrieves itinerary preferences by trip ID
+// Delegates to TripService which uses GraphQL
+func (s *SupabaseService) GetItineraryPreferencesByTripID(tripID string) (*types.ItineraryPreferences, error) {
+	return s.TripService.GetItineraryPreferencesByTripID(tripID)
+}
+
+// GetItineraryPreferencesByID retrieves itinerary preferences by ID
+// Delegates to TripService which uses GraphQL
+func (s *SupabaseService) GetItineraryPreferencesByID(preferencesID string) (*types.ItineraryPreferences, error) {
+	return s.TripService.GetItineraryPreferencesByID(preferencesID)
+}
+
+// TripActivityRecord represents a record to be inserted into trips_activities table
+type TripActivityRecord struct {
+	TripID          string   `json:"trip_id"`
+	Name            string   `json:"name"`
+	Description     *string  `json:"description,omitempty"`
+	ActivityDate    string   `json:"activity_date"` // YYYY-MM-DD format
+	StartTime       *string  `json:"start_time,omitempty"`
+	EndTime         *string  `json:"end_time,omitempty"`
+	LocationName    *string  `json:"location_name,omitempty"`
+	Address         *string  `json:"address,omitempty"`
+	Latitude        *float64 `json:"latitude,omitempty"`
+	Longitude       *float64 `json:"longitude,omitempty"`
+	BboxMinLon      *float64 `json:"bbox_min_lon,omitempty"`
+	BboxMinLat      *float64 `json:"bbox_min_lat,omitempty"`
+	BboxMaxLon      *float64 `json:"bbox_max_lon,omitempty"`
+	BboxMaxLat      *float64 `json:"bbox_max_lat,omitempty"`
+	ActivityMode    string   `json:"activity_mode"`
+	AttractionType  *string  `json:"attraction_type,omitempty"`
+	DurationMinutes *int     `json:"duration_minutes,omitempty"`
+	Notes           *string  `json:"notes,omitempty"`
+	LocationID      *string  `json:"location_id,omitempty"`
+	AttractionID    *string  `json:"attraction_id,omitempty"`
+	Rating          *float64 `json:"rating,omitempty"`
+	ReviewCount     *int     `json:"review_count,omitempty"`
+	PriceLevel      *string  `json:"price_level,omitempty"`
+	Website         *string  `json:"website,omitempty"`
+	PhoneNumber     *string  `json:"phone_number,omitempty"`
+}
+
+// SaveTripActivities saves all activities from an itinerary to the trips_activities table
+// Returns (activitiesSaved, pointActivities, areaActivities, error)
+func (s *SupabaseService) SaveTripActivities(tripID string, trip *types.Trip, itinerary *types.TripItineraryResponse) (int, int, int, error) {
+	if tripID == "" {
+		return 0, 0, 0, fmt.Errorf("trip_id is required")
+	}
+
+	if itinerary == nil || len(itinerary.Itinerary.Days) == 0 {
+		return 0, 0, 0, fmt.Errorf("itinerary has no days")
+	}
+
+	var records []TripActivityRecord
+	pointCount := 0
+	areaCount := 0
+
+	// Convert itinerary to database records
+	for _, day := range itinerary.Itinerary.Days {
+		for _, activity := range day.Activities {
+			// Create database record
+			record := TripActivityRecord{
+				TripID:       tripID,
+				Name:         activity.Name,
+				ActivityDate: day.Date, // Already in YYYY-MM-DD format from AI
+				ActivityMode: activity.ActivityMode,
+			}
+
+			// Optional description
+			if activity.Description != "" {
+				record.Description = &activity.Description
+			}
+
+			// Times (already in HH:MM format from AI)
+			if activity.StartTime != "" {
+				record.StartTime = &activity.StartTime
+			}
+			if activity.EndTime != "" {
+				record.EndTime = &activity.EndTime
+			}
+
+			// Location information
+			if activity.LocationName != "" {
+				record.LocationName = &activity.LocationName
+			}
+			if activity.Address != "" {
+				record.Address = &activity.Address
+			}
+
+			// Point coordinates
+			if activity.Latitude != nil {
+				record.Latitude = activity.Latitude
+			}
+			if activity.Longitude != nil {
+				record.Longitude = activity.Longitude
+			}
+
+			// Bounding box
+			if activity.BboxMinLon != nil {
+				record.BboxMinLon = activity.BboxMinLon
+			}
+			if activity.BboxMinLat != nil {
+				record.BboxMinLat = activity.BboxMinLat
+			}
+			if activity.BboxMaxLon != nil {
+				record.BboxMaxLon = activity.BboxMaxLon
+			}
+			if activity.BboxMaxLat != nil {
+				record.BboxMaxLat = activity.BboxMaxLat
+			}
+
+			// Attraction metadata
+			if activity.AttractionType != "" {
+				record.AttractionType = &activity.AttractionType
+			}
+			if activity.DurationMinutes > 0 {
+				record.DurationMinutes = &activity.DurationMinutes
+			}
+			if activity.Notes != "" {
+				record.Notes = &activity.Notes
+			}
+
+			// Track statistics
+			if activity.ActivityMode == "point" {
+				pointCount++
+			} else if activity.ActivityMode == "area" {
+				areaCount++
+			}
+
+			records = append(records, record)
+		}
+	}
+
+	if len(records) == 0 {
+		return 0, 0, 0, fmt.Errorf("no activities to save")
+	}
+
+	fmt.Printf("💾 Saving %d activities to database (%d point, %d area, %d other)\n",
+		len(records), pointCount, areaCount, len(records)-pointCount-areaCount)
+
+	// Convert records to JSON for batch insert
+	recordsJSON, err := json.Marshal(records)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to marshal activities: %w", err)
+	}
+
+	// Batch insert using PostgREST
+	resp, _, err := s.client.From(tripsActivitiesTable).Insert(string(recordsJSON), false, "", "", "").Execute()
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to insert activities: %w", err)
+	}
+
+	// Verify insertion
+	var inserted []TripActivityRecord
+	if err := json.Unmarshal(resp, &inserted); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to parse insert response: %w", err)
+	}
+
+	fmt.Printf("✅ Successfully saved %d activities to trips_activities table\n", len(inserted))
+	return len(inserted), pointCount, areaCount, nil
+}
+
+// UpdatePreferencesStatus updates the status of itinerary preferences
+func (s *SupabaseService) UpdatePreferencesStatus(preferencesID string, status string, errorMsg *string) error {
+	if preferencesID == "" {
+		return fmt.Errorf("preferences_id is required")
+	}
+
+	// Build update payload
+	update := map[string]interface{}{
+		"status":     status,
+		"updated_at": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if errorMsg != nil {
+		update["error_message"] = *errorMsg
+	} else {
+		update["error_message"] = nil // Clear error message on success
+	}
+
+	updateJSON, err := json.Marshal(update)
+	if err != nil {
+		return fmt.Errorf("failed to marshal update: %w", err)
+	}
+
+	// Update preferences
+	_, _, err = s.client.From("itinerary_preferences").
+		Update(string(updateJSON), "", "").
+		Eq("id", preferencesID).
+		Execute()
+
+	if err != nil {
+		return fmt.Errorf("failed to update preferences status: %w", err)
+	}
+
+	fmt.Printf("✅ Updated preferences %s status to: %s\n", preferencesID, status)
+	return nil
 }

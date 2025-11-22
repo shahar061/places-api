@@ -47,5 +47,11 @@ func (h *Handler) SetupRoutes(router *gin.Engine) {
 		{
 			airports.POST("/major-city", h.HandleDetermineAirportMajorCity)
 		}
+
+		// Trips endpoints
+		trips := v1.Group("/trips")
+		{
+			trips.POST("/plan", h.HandlePlanTrip)
+		}
 	}
 }

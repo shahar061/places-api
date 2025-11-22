@@ -291,6 +291,7 @@ type JobType string
 
 const (
 	JobTypeFetchAttractions JobType = "fetch_attractions"
+	JobTypePlanTrip         JobType = "plan_trip"
 )
 
 type Job struct {
@@ -333,6 +334,13 @@ type FetchAttractionsMessage struct {
 	RequestedAt time.Time `json:"requested_at"`
 }
 
+type PlanTripMessage struct {
+	JobID         string    `json:"job_id"`
+	TripID        string    `json:"trip_id"`
+	PreferencesID string    `json:"preferences_id"`
+	RequestedAt   time.Time `json:"requested_at"`
+}
+
 type JobStatusMessage struct {
 	JobID     string                 `json:"job_id"`
 	AreaKey   string                 `json:"area_key"`
@@ -370,8 +378,10 @@ type DataFreshness struct {
 const (
 	JobsStreamName           = "JOBS"
 	SubjectFetchAttractions  = "jobs.fetch_attractions"
+	SubjectPlanTrip          = "jobs.plan_trip"
 	SubjectJobStatus         = "jobs.status"
 	ConsumerFetchAttractions = "fetch-attractions-worker"
+	ConsumerPlanTrip         = "plan-trip-worker"
 )
 
 // Helper methods
@@ -447,4 +457,234 @@ type ValidatedLocation struct {
 	Popularity   int     `json:"popularity"`
 	StateCode    string  `json:"state_code"`
 	StateName    string  `json:"state_name"`
+}
+
+// Trip Planner types
+
+// TripPlanRequest represents the request to create a trip itinerary
+type TripPlanRequest struct {
+	TripID        string `json:"trip_id" binding:"required"`
+	PreferencesID string `json:"preferences_id" binding:"required"`
+}
+
+// TripPlanResponse represents the response from creating a trip itinerary
+type TripPlanResponse struct {
+	TripID      string                 `json:"trip_id"`
+	Itinerary   map[string]interface{} `json:"itinerary,omitempty"` // Placeholder for AI-generated itinerary
+	Status      string                 `json:"status"`
+	Message     string                 `json:"message"`
+	GeneratedAt time.Time              `json:"generated_at"`
+}
+
+// Trip represents a trip from the trips table
+type Trip struct {
+	ID                    string            `json:"id"`
+	UserID                string            `json:"user_id"`
+	Name                  string            `json:"name"`
+	StartDate             string            `json:"start_date"` // Date format: YYYY-MM-DD
+	EndDate               string            `json:"end_date"`   // Date format: YYYY-MM-DD
+	Notes                 *string           `json:"notes,omitempty"`
+	CreatedAt             time.Time         `json:"created_at"`
+	CoverKey              *string           `json:"cover_key,omitempty"`
+	CoverPhotoID          *string           `json:"cover_photo_id,omitempty"`
+	CoverPhotoURLs        *json.RawMessage  `json:"cover_photo_urls,omitempty"` // JSONB
+	CoverUserName         *string           `json:"cover_user_name,omitempty"`
+	CoverUserUsername     *string           `json:"cover_user_username,omitempty"`
+	CoverUserProfileURL   *string           `json:"cover_user_profile_url,omitempty"`
+	CoverDownloadLocation *string           `json:"cover_download_location,omitempty"`
+	Destinations          []TripDestination `json:"destinations,omitempty"` // Nested via GraphQL
+}
+
+// TripDestination represents a destination in a trip from the trip_destinations table
+type TripDestination struct {
+	ID            string             `json:"id"`
+	TripID        string             `json:"trip_id"`
+	LocationID    string             `json:"location_id"`
+	OrderIndex    int16              `json:"order_index"`
+	DisplayName   string             `json:"display_name"`
+	Country       *string            `json:"country,omitempty"`
+	Latitude      *float64           `json:"latitude,omitempty"`
+	Longitude     *float64           `json:"longitude,omitempty"`
+	StartDayIndex *int               `json:"start_day_index,omitempty"`
+	EndDayIndex   *int               `json:"end_day_index,omitempty"`
+	Location      *LocationReference `json:"location,omitempty"` // Nested via GraphQL
+}
+
+// LocationReference represents a location from the locations table (nested in trip destinations)
+type LocationReference struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Country      string  `json:"country"`
+	CountryCode  string  `json:"country_code"`
+	StateName    *string `json:"state_name,omitempty"`
+	StateCode    *string `json:"state_code,omitempty"`
+	LocationType string  `json:"location_type"`
+}
+
+// GraphQL response types for Supabase GraphQL API
+
+// GraphQLRequest represents a GraphQL query request
+type GraphQLRequest struct {
+	Query     string                 `json:"query"`
+	Variables map[string]interface{} `json:"variables,omitempty"`
+}
+
+// GraphQLResponse represents a GraphQL query response
+type GraphQLResponse struct {
+	Data   json.RawMessage `json:"data"`
+	Errors []GraphQLError  `json:"errors,omitempty"`
+}
+
+// GraphQLError represents a GraphQL error
+type GraphQLError struct {
+	Message string   `json:"message"`
+	Path    []string `json:"path,omitempty"`
+}
+
+// GraphQL collection response wrapper (edges/node pattern)
+type GraphQLEdge[T any] struct {
+	Node T `json:"node"`
+}
+
+type GraphQLCollection[T any] struct {
+	Edges []GraphQLEdge[T] `json:"edges"`
+}
+
+// GraphQL response types for trips
+type TripGraphQLNode struct {
+	ID                         string                                         `json:"id"`
+	UserID                     string                                         `json:"user_id"`
+	Name                       string                                         `json:"name"`
+	StartDate                  string                                         `json:"start_date"`
+	EndDate                    string                                         `json:"end_date"`
+	Notes                      *string                                        `json:"notes"`
+	CreatedAt                  time.Time                                      `json:"created_at"`
+	CoverKey                   *string                                        `json:"cover_key"`
+	CoverPhotoID               *string                                        `json:"cover_photo_id"`
+	CoverPhotoURLs             *json.RawMessage                               `json:"cover_photo_urls"`
+	CoverUserName              *string                                        `json:"cover_user_name"`
+	CoverUserUsername          *string                                        `json:"cover_user_username"`
+	CoverUserProfileURL        *string                                        `json:"cover_user_profile_url"`
+	CoverDownloadLocation      *string                                        `json:"cover_download_location"`
+	TripDestinationsCollection *GraphQLCollection[TripDestinationGraphQLNode] `json:"trip_destinationsCollection"`
+}
+
+type TripDestinationGraphQLNode struct {
+	ID            string             `json:"id"`
+	TripID        string             `json:"trip_id"`
+	LocationID    string             `json:"location_id"`
+	OrderIndex    int16              `json:"order_index"`
+	DisplayName   string             `json:"display_name"`
+	Country       *string            `json:"country"`
+	Latitude      *float64           `json:"latitude"`
+	Longitude     *float64           `json:"longitude"`
+	StartDayIndex *int               `json:"start_day_index"`
+	EndDayIndex   *int               `json:"end_day_index"`
+	Locations     *LocationReference `json:"locations"` // Note: singular "locations" field name from Supabase GraphQL
+}
+
+// Convert GraphQL node to Trip struct
+func (n *TripGraphQLNode) ToTrip() *Trip {
+	trip := &Trip{
+		ID:                    n.ID,
+		UserID:                n.UserID,
+		Name:                  n.Name,
+		StartDate:             n.StartDate,
+		EndDate:               n.EndDate,
+		Notes:                 n.Notes,
+		CreatedAt:             n.CreatedAt,
+		CoverKey:              n.CoverKey,
+		CoverPhotoID:          n.CoverPhotoID,
+		CoverPhotoURLs:        n.CoverPhotoURLs,
+		CoverUserName:         n.CoverUserName,
+		CoverUserUsername:     n.CoverUserUsername,
+		CoverUserProfileURL:   n.CoverUserProfileURL,
+		CoverDownloadLocation: n.CoverDownloadLocation,
+		Destinations:          []TripDestination{},
+	}
+
+	// Convert nested destinations
+	if n.TripDestinationsCollection != nil {
+		for _, edge := range n.TripDestinationsCollection.Edges {
+			dest := TripDestination{
+				ID:            edge.Node.ID,
+				TripID:        edge.Node.TripID,
+				LocationID:    edge.Node.LocationID,
+				OrderIndex:    edge.Node.OrderIndex,
+				DisplayName:   edge.Node.DisplayName,
+				Country:       edge.Node.Country,
+				Latitude:      edge.Node.Latitude,
+				Longitude:     edge.Node.Longitude,
+				StartDayIndex: edge.Node.StartDayIndex,
+				EndDayIndex:   edge.Node.EndDayIndex,
+				Location:      edge.Node.Locations,
+			}
+			trip.Destinations = append(trip.Destinations, dest)
+		}
+	}
+
+	return trip
+}
+
+// ItineraryPreferences represents preferences from the itinerary_preferences table
+type ItineraryPreferences struct {
+	ID                   string    `json:"id"`
+	TripID               string    `json:"trip_id"`
+	UserID               string    `json:"user_id"`
+	BudgetLevel          string    `json:"budget_level"`           // Values: "budget", "midRange", "luxury"
+	TravelStyle          string    `json:"travel_style"`           // Values: "adventure", "relaxation", "culture", "food", "nightlife", "family"
+	Interests            []string  `json:"interests"`              // Array of interests
+	Pace                 string    `json:"pace"`                   // Values: "relaxed", "moderate", "fast"
+	IncludeHotels        bool      `json:"include_hotels"`         // Default: true
+	IncludeRestaurants   bool      `json:"include_restaurants"`    // Default: true
+	IncludeActivities    bool      `json:"include_activities"`     // Default: true
+	MustVisitAttractions []string  `json:"must_visit_attractions"` // Optional array
+	AdditionalNotes      *string   `json:"additional_notes,omitempty"`
+	MaxActivitiesPerDay  *int      `json:"max_activities_per_day,omitempty"`
+	Status               string    `json:"status"` // Values: "pending", "processing", "completed", "failed"
+	ErrorMessage         *string   `json:"error_message,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// TripItineraryResponse represents the AI-generated itinerary
+type TripItineraryResponse struct {
+	Itinerary TripItinerary `json:"itinerary"`
+}
+
+type TripItinerary struct {
+	Summary string         `json:"summary"`
+	Days    []ItineraryDay `json:"days"`
+}
+
+type ItineraryDay struct {
+	Date        string              `json:"date"`
+	Destination string              `json:"destination"`
+	Activities  []ItineraryActivity `json:"activities"`
+}
+
+type ItineraryActivity struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	StartTime    string `json:"start_time"`
+	EndTime      string `json:"end_time"`
+	LocationName string `json:"location_name"`
+	Address      string `json:"address,omitempty"` // Enriched by geocoding services
+
+	// Point coordinates (for specific locations like "Eiffel Tower")
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+
+	// Bounding box (for exploratory/area activities like "Explore Budapest")
+	BboxMinLon *float64 `json:"bbox_min_lon,omitempty"`
+	BboxMinLat *float64 `json:"bbox_min_lat,omitempty"`
+	BboxMaxLon *float64 `json:"bbox_max_lon,omitempty"`
+	BboxMaxLat *float64 `json:"bbox_max_lat,omitempty"`
+
+	// Activity mode: "point" (specific location), "area" (bbox region), "none" (no location)
+	ActivityMode string `json:"activity_mode"`
+
+	AttractionType  string `json:"attraction_type"`
+	DurationMinutes int    `json:"duration_minutes"`
+	Notes           string `json:"notes,omitempty"`
 }

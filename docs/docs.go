@@ -52,7 +52,7 @@ const docTemplate = `{
         },
         "/v1/airports/major-city": {
             "post": {
-                "description": "Determine the primary major city that an airport serves using AI",
+                "description": "Determine the primary major city that an airport serves using AI, with optional location validation",
                 "consumes": [
                     "application/json"
                 ],
@@ -72,6 +72,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/types.AirportMajorCityRequest"
                         }
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Validate location using Supabase edge function (default: true)",
+                        "name": "validate",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -369,6 +375,76 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/trips/plan": {
+            "post": {
+                "description": "Generate an AI-powered itinerary for a trip based on trip details and user preferences",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "trips"
+                ],
+                "summary": "Create a trip itinerary using AI",
+                "parameters": [
+                    {
+                        "description": "Trip planning request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.TripPlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Trip itinerary generated successfully",
+                        "schema": {
+                            "$ref": "#/definitions/types.TripPlanResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Trip or preferences not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -473,6 +549,9 @@ const docTemplate = `{
                 },
                 "reasoning": {
                     "type": "string"
+                },
+                "validated_location": {
+                    "$ref": "#/definitions/types.ValidatedLocation"
                 }
             }
         },
@@ -597,6 +676,78 @@ const docTemplate = `{
                 "JobStatusCompleted",
                 "JobStatusFailed"
             ]
+        },
+        "types.TripPlanRequest": {
+            "type": "object",
+            "required": [
+                "preferences_id",
+                "trip_id"
+            ],
+            "properties": {
+                "preferences_id": {
+                    "type": "string"
+                },
+                "trip_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.TripPlanResponse": {
+            "type": "object",
+            "properties": {
+                "generated_at": {
+                    "type": "string"
+                },
+                "itinerary": {
+                    "description": "Placeholder for AI-generated itinerary",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "trip_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.ValidatedLocation": {
+            "type": "object",
+            "properties": {
+                "country": {
+                    "type": "string"
+                },
+                "country_code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "latitude": {
+                    "type": "number"
+                },
+                "location_type": {
+                    "type": "string"
+                },
+                "longitude": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "popularity": {
+                    "type": "integer"
+                },
+                "state_code": {
+                    "type": "string"
+                },
+                "state_name": {
+                    "type": "string"
+                }
+            }
         }
     }
 }`
