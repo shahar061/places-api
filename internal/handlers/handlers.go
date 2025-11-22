@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -339,6 +340,156 @@ func (h *Handler) HandleJobStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, jobInfo)
+}
+
+// HandleJobStatusStream handles GET /v1/jobs/{jobId}/stream
+// @Summary Stream job status updates via Server-Sent Events (SSE)
+// @Description Establishes a Server-Sent Events connection to receive real-time job status updates
+// @Tags jobs
+// @Accept json
+// @Produce text/event-stream
+// @Param jobId path string true "Job ID"
+// @Success 200 {string} string "Server-Sent Events stream"
+// @Failure 400 {object} map[string]string "Bad request"
+// @Failure 404 {object} map[string]string "Job not found"
+// @Failure 503 {object} map[string]string "Streaming service not available"
+// @Router /v1/jobs/{jobId}/stream [get]
+func (h *Handler) HandleJobStatusStream(c *gin.Context) {
+	jobID := c.Param("jobId")
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "job ID is required"})
+		return
+	}
+
+	// Check if NATS service is available
+	if h.natsService == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "streaming service is not available"})
+		return
+	}
+
+	// Verify job exists and get initial status
+	if h.jobService == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "job service is not available"})
+		return
+	}
+
+	job, err := h.jobService.GetJobStatus(jobID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		return
+	}
+
+	// Set SSE headers
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
+	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Send initial status immediately
+	h.sendSSEMessage(c, job)
+
+	// If job is already completed or failed, close stream
+	if job.Status == types.JobStatusCompleted || job.Status == types.JobStatusFailed {
+		h.logger.Info().Str("job_id", jobID).Str("status", string(job.Status)).Msg("Job already completed/failed, closing SSE stream")
+		return
+	}
+
+	// Subscribe to NATS for this specific job
+	statusChan, unsubscribe, err := h.natsService.SubscribeJobStatusForJob(jobID)
+	if err != nil {
+		h.logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to subscribe to job status updates")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to establish streaming connection"})
+		return
+	}
+	defer unsubscribe()
+
+	h.logger.Info().Str("job_id", jobID).Msg("SSE stream established")
+
+	// Create a context that gets canceled when client disconnects
+	ctx := c.Request.Context()
+
+	// Stream updates until job completes or client disconnects
+	for {
+		select {
+		case <-ctx.Done():
+			// Client disconnected
+			h.logger.Info().Str("job_id", jobID).Msg("Client disconnected from SSE stream")
+			return
+
+		case statusMsg, ok := <-statusChan:
+			if !ok {
+				// Channel closed
+				h.logger.Info().Str("job_id", jobID).Msg("Status channel closed")
+				return
+			}
+
+			// Convert status message to job format for consistency
+			jobUpdate := &types.Job{
+				ID:       statusMsg.JobID,
+				AreaKey:  statusMsg.AreaKey,
+				Status:   statusMsg.Status,
+				Progress: make(map[string]interface{}),
+				Metadata: statusMsg.Metadata,
+			}
+
+			// Convert progress
+			if statusMsg.Progress != nil {
+				jobUpdate.Progress["percentage"] = statusMsg.Progress.Percentage
+				jobUpdate.Progress["message"] = statusMsg.Progress.Message
+				jobUpdate.Progress["step"] = statusMsg.Progress.Step
+			}
+
+			// Handle error
+			if statusMsg.Error != nil {
+				jobUpdate.ErrorMessage = statusMsg.Error
+			}
+
+			// Send update to client
+			h.sendSSEMessage(c, jobUpdate)
+
+			h.logger.Debug().
+				Str("job_id", jobID).
+				Str("status", string(statusMsg.Status)).
+				Int("progress", statusMsg.Progress.Percentage).
+				Msg("Sent SSE update")
+
+			// Close stream if job is completed or failed
+			if statusMsg.Status == types.JobStatusCompleted || statusMsg.Status == types.JobStatusFailed {
+				h.logger.Info().Str("job_id", jobID).Str("status", string(statusMsg.Status)).Msg("Job finished, closing SSE stream")
+				return
+			}
+
+		case <-time.After(30 * time.Second):
+			// Send keepalive comment every 30 seconds
+			fmt.Fprintf(c.Writer, ": keepalive\n\n")
+			c.Writer.Flush()
+		}
+	}
+}
+
+// sendSSEMessage sends a job status update as an SSE message
+func (h *Handler) sendSSEMessage(c *gin.Context, job *types.Job) {
+	data := gin.H{
+		"job_id":   job.ID,
+		"area_key": job.AreaKey,
+		"status":   job.Status,
+		"progress": job.GetProgress(),
+	}
+
+	if job.ErrorMessage != nil {
+		data["error"] = *job.ErrorMessage
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to marshal SSE message")
+		return
+	}
+
+	// Write SSE format: "data: {json}\n\n"
+	fmt.Fprintf(c.Writer, "data: %s\n\n", jsonData)
+	c.Writer.Flush()
 }
 
 // HandleSearchPlacesByText handles GET /v1/places/search

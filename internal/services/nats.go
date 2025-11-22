@@ -280,3 +280,49 @@ func (n *NATSService) Close() {
 func (n *NATSService) IsConnected() bool {
 	return n.conn != nil && n.conn.IsConnected()
 }
+
+// SubscribeJobStatusForJob creates a subscription for job status updates for a specific job ID
+// Returns a channel to receive updates and an unsubscribe function
+func (n *NATSService) SubscribeJobStatusForJob(jobID string) (<-chan *types.JobStatusMessage, func(), error) {
+	// Create a buffered channel for status messages
+	statusChan := make(chan *types.JobStatusMessage, 10)
+	
+	// Subscribe to job status updates
+	sub, err := n.js.Subscribe(types.SubjectJobStatus, func(msg *nats.Msg) {
+		// Parse message
+		var statusMsg types.JobStatusMessage
+		if err := json.Unmarshal(msg.Data, &statusMsg); err != nil {
+			fmt.Printf("Error unmarshaling job status message: %v\n", err)
+			return
+		}
+
+		// Filter for specific job ID
+		if statusMsg.JobID == jobID {
+			// Send to channel (non-blocking)
+			select {
+			case statusChan <- &statusMsg:
+			default:
+				// Channel full, skip this message
+				fmt.Printf("Warning: Status channel full for job %s, skipping message\n", jobID)
+			}
+		}
+
+		// Acknowledge
+		msg.Ack()
+	})
+
+	if err != nil {
+		close(statusChan)
+		return nil, nil, fmt.Errorf("failed to subscribe to job status: %v", err)
+	}
+
+	// Create unsubscribe function
+	unsubscribe := func() {
+		if sub != nil {
+			sub.Unsubscribe()
+		}
+		close(statusChan)
+	}
+
+	return statusChan, unsubscribe, nil
+}

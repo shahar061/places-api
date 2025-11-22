@@ -21,6 +21,11 @@ definitions:
             type: string
           county:
             type: string
+          extent:
+            description: 'Bounding box: [minLon, minLat, maxLon, maxLat]'
+            items:
+              type: number
+            type: array
           housenumber:
             type: string
           name:
@@ -345,6 +350,46 @@ paths:
               type: string
             type: object
       summary: Get job status
+      tags:
+      - jobs
+  /v1/jobs/{jobId}/stream:
+    get:
+      consumes:
+      - application/json
+      description: Establishes a Server-Sent Events connection to receive real-time
+        job status updates
+      parameters:
+      - description: Job ID
+        in: path
+        name: jobId
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: Server-Sent Events stream
+          schema:
+            type: string
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Job not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Streaming service not available
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Stream job status updates via Server-Sent Events (SSE)
       tags:
       - jobs
   /v1/places/search:

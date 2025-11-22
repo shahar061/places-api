@@ -223,6 +223,65 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/jobs/{jobId}/stream": {
+            "get": {
+                "description": "Establishes a Server-Sent Events connection to receive real-time job status updates",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "jobs"
+                ],
+                "summary": "Stream job status updates via Server-Sent Events (SSE)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job ID",
+                        "name": "jobId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Server-Sent Events stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Job not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Streaming service not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/places/search": {
             "get": {
                 "description": "Search for places by text using Photon geocoding service",
@@ -479,6 +538,13 @@ const docTemplate = `{
                         },
                         "county": {
                             "type": "string"
+                        },
+                        "extent": {
+                            "description": "Bounding box: [minLon, minLat, maxLon, maxLat]",
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
                         },
                         "housenumber": {
                             "type": "string"

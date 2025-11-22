@@ -40,6 +40,7 @@ func (h *Handler) SetupRoutes(router *gin.Engine) {
 		jobs := v1.Group("/jobs")
 		{
 			jobs.GET("/:jobId/status", h.HandleJobStatus)
+			jobs.GET("/:jobId/stream", h.HandleJobStatusStream)
 		}
 
 		// Airports endpoints
