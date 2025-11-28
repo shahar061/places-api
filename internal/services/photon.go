@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"places_api/internal/types"
@@ -195,6 +196,12 @@ func (s *PhotonService) IsAreaLocation(location *PhotonLocation) bool {
 // EnrichActivity enriches an activity with accurate location data from Photon
 // Returns true if enrichment was successful, false otherwise
 func (s *PhotonService) EnrichActivity(activity *types.ItineraryActivity) bool {
+	return s.EnrichActivityWithContext(activity, nil)
+}
+
+// EnrichActivityWithContext enriches an activity with location data using destination context for better accuracy
+// destinationContext should contain the destination city/country to constrain the search
+func (s *PhotonService) EnrichActivityWithContext(activity *types.ItineraryActivity, destinationContext *types.TripDestination) bool {
 	if activity.LocationName == "" {
 		return false
 	}
@@ -205,16 +212,55 @@ func (s *PhotonService) EnrichActivity(activity *types.ItineraryActivity) bool {
 		return false
 	}
 
-	// Try to search with sanitized name
-	location, err := s.SearchLocation(sanitizedName)
+	// Build query with destination context for better geofencing
+	searchQuery := sanitizedName
+	if destinationContext != nil {
+		// Append city/country to query for geographical constraint
+		searchQuery = s.BuildContextualQuery(sanitizedName, destinationContext)
+	}
+
+	// Try to search with contextual query
+	var location *PhotonLocation
+	var err error
+
+	// If we have destination coordinates, use them for location biasing
+	if destinationContext != nil && destinationContext.Latitude != nil && destinationContext.Longitude != nil {
+		location, err = s.GetLocationData(searchQuery, *destinationContext.Latitude, *destinationContext.Longitude)
+	} else {
+		location, err = s.SearchLocation(searchQuery)
+	}
+
 	if err != nil {
-		// If sanitization changed the name and search failed, try original
-		if sanitizedName != activity.LocationName {
-			location, err = s.SearchLocation(activity.LocationName)
+		// Fallback: try without context if contextual search failed
+		if destinationContext != nil {
+			location, err = s.SearchLocation(sanitizedName)
 			if err != nil {
-				return false
+				// Last resort: try original name
+				if sanitizedName != activity.LocationName {
+					location, err = s.SearchLocation(activity.LocationName)
+					if err != nil {
+						return false
+					}
+				} else {
+					return false
+				}
 			}
 		} else {
+			// If sanitization changed the name and search failed, try original
+			if sanitizedName != activity.LocationName {
+				location, err = s.SearchLocation(activity.LocationName)
+				if err != nil {
+					return false
+				}
+			} else {
+				return false
+			}
+		}
+	}
+
+	// Validate result is within reasonable distance of destination (if context provided)
+	if destinationContext != nil && destinationContext.Latitude != nil && destinationContext.Longitude != nil {
+		if !s.ValidateLocationDistance(location, *destinationContext.Latitude, *destinationContext.Longitude) {
 			return false
 		}
 	}
@@ -338,28 +384,32 @@ func (s *PhotonService) EnrichItinerary(itinerary *types.TripItineraryResponse) 
 	return enrichedCount, totalActivities
 }
 
-// EnrichItineraryWithFallback enriches all activities using tiered geocoding services
+// EnrichItineraryWithFallback enriches all activities using tiered geocoding services with destination context
 // Tries Photon first (free), then LocationIQ (free tier), then gives up gracefully
 // Returns (photonSuccess, locationiqSuccess, totalActivities)
-func (s *PhotonService) EnrichItineraryWithFallback(itinerary *types.TripItineraryResponse, locationiqService *LocationIQService) (int, int, int) {
+func (s *PhotonService) EnrichItineraryWithFallback(itinerary *types.TripItineraryResponse, locationiqService *LocationIQService, trip *types.Trip) (int, int, int) {
 	totalActivities := 0
 	photonSuccess := 0
 	locationiqSuccess := 0
 
 	for dayIdx := range itinerary.Itinerary.Days {
 		day := &itinerary.Itinerary.Days[dayIdx]
+
+		// Determine which destination this day corresponds to
+		destinationContext := s.GetDestinationForDay(day, trip)
+
 		for actIdx := range day.Activities {
 			activity := &day.Activities[actIdx]
 			totalActivities++
 
-			// Try Photon first (free)
-			if s.EnrichActivity(activity) {
+			// Try Photon first (free) with destination context
+			if s.EnrichActivityWithContext(activity, destinationContext) {
 				photonSuccess++
 				continue
 			}
 
-			// Photon failed, try LocationIQ if available
-			if locationiqService != nil && locationiqService.EnrichActivity(activity) {
+			// Photon failed, try LocationIQ if available (also with context)
+			if locationiqService != nil && locationiqService.EnrichActivityWithContext(activity, destinationContext) {
 				locationiqSuccess++
 				continue
 			}
@@ -369,4 +419,93 @@ func (s *PhotonService) EnrichItineraryWithFallback(itinerary *types.TripItinera
 	}
 
 	return photonSuccess, locationiqSuccess, totalActivities
+}
+
+// GetDestinationForDay determines which trip destination corresponds to a given itinerary day
+func (s *PhotonService) GetDestinationForDay(day *types.ItineraryDay, trip *types.Trip) *types.TripDestination {
+	if trip == nil || len(trip.Destinations) == 0 {
+		return nil
+	}
+
+	// If day has a destination field that matches one of the trip destinations, use it
+	if day.Destination != "" {
+		for i := range trip.Destinations {
+			dest := &trip.Destinations[i]
+			// Match by display name (case insensitive)
+			if strings.EqualFold(dest.DisplayName, day.Destination) {
+				return dest
+			}
+			// Also try matching just the city name
+			if dest.Location != nil && strings.EqualFold(dest.Location.Name, day.Destination) {
+				return dest
+			}
+		}
+	}
+
+	// Fallback: use first destination (common for single-destination trips)
+	return &trip.Destinations[0]
+}
+
+// BuildContextualQuery creates a search query with geographical context
+func (s *PhotonService) BuildContextualQuery(locationName string, destination *types.TripDestination) string {
+	if destination == nil {
+		return locationName
+	}
+
+	// Start with the location name
+	query := locationName
+
+	// Add city context
+	if destination.DisplayName != "" {
+		query += ", " + destination.DisplayName
+	}
+
+	// Add country context if available
+	if destination.Country != nil && *destination.Country != "" {
+		query += ", " + *destination.Country
+	} else if destination.Location != nil && destination.Location.Country != "" {
+		query += ", " + destination.Location.Country
+	}
+
+	return query
+}
+
+// ValidateLocationDistance checks if a geocoding result is within reasonable distance of destination
+// Returns true if distance is acceptable (within ~200km for cities, ~500km for countries)
+func (s *PhotonService) ValidateLocationDistance(location *PhotonLocation, destLat, destLon float64) bool {
+	if location == nil || len(location.Geometry.Coordinates) < 2 {
+		return false
+	}
+
+	// Calculate distance between result and destination
+	resultLon := location.Geometry.Coordinates[0]
+	resultLat := location.Geometry.Coordinates[1]
+
+	distance := s.HaversineDistance(destLat, destLon, resultLat, resultLon)
+
+	// Threshold: 200km for most searches (catches wrong-continent results)
+	// This is generous enough to handle suburbs and nearby cities
+	maxDistanceKm := 200.0
+
+	return distance <= maxDistanceKm
+}
+
+// HaversineDistance calculates the great-circle distance between two points (in kilometers)
+func (s *PhotonService) HaversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusKm = 6371.0
+
+	// Convert to radians
+	lat1Rad := lat1 * math.Pi / 180
+	lon1Rad := lon1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+	lon2Rad := lon2 * math.Pi / 180
+
+	// Haversine formula
+	dLat := lat2Rad - lat1Rad
+	dLon := lon2Rad - lon1Rad
+
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dLon/2)*math.Sin(dLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusKm * c
 }

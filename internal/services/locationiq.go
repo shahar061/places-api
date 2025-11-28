@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"places_api/internal/types"
@@ -135,6 +136,11 @@ func (s *LocationIQService) IsAreaLocation(location *LocationIQResponse) bool {
 // EnrichActivity enriches an activity with location data from LocationIQ
 // Returns true if enrichment was successful, false otherwise
 func (s *LocationIQService) EnrichActivity(activity *types.ItineraryActivity) bool {
+	return s.EnrichActivityWithContext(activity, nil)
+}
+
+// EnrichActivityWithContext enriches an activity with location data using destination context
+func (s *LocationIQService) EnrichActivityWithContext(activity *types.ItineraryActivity, destinationContext *types.TripDestination) bool {
 	if s == nil {
 		return false
 	}
@@ -143,10 +149,31 @@ func (s *LocationIQService) EnrichActivity(activity *types.ItineraryActivity) bo
 		return false
 	}
 
-	// Search for location
-	location, err := s.SearchLocation(activity.LocationName)
+	// Build query with destination context
+	searchQuery := activity.LocationName
+	if destinationContext != nil {
+		searchQuery = s.BuildContextualQuery(activity.LocationName, destinationContext)
+	}
+
+	// Search for location with context
+	location, err := s.SearchLocation(searchQuery)
 	if err != nil {
-		return false
+		// Fallback: try without context
+		if destinationContext != nil {
+			location, err = s.SearchLocation(activity.LocationName)
+			if err != nil {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+
+	// Validate result is within reasonable distance of destination
+	if destinationContext != nil && destinationContext.Latitude != nil && destinationContext.Longitude != nil {
+		if !s.ValidateLocationDistance(location, *destinationContext.Latitude, *destinationContext.Longitude) {
+			return false
+		}
 	}
 
 	// Parse center coordinates
@@ -260,4 +287,72 @@ func joinNonEmpty(parts []string, sep string) string {
 		_ = i
 	}
 	return result
+}
+
+// BuildContextualQuery creates a search query with geographical context
+func (s *LocationIQService) BuildContextualQuery(locationName string, destination *types.TripDestination) string {
+	if destination == nil {
+		return locationName
+	}
+
+	// Start with the location name
+	query := locationName
+
+	// Add city context
+	if destination.DisplayName != "" {
+		query += ", " + destination.DisplayName
+	}
+
+	// Add country context if available
+	if destination.Country != nil && *destination.Country != "" {
+		query += ", " + *destination.Country
+	} else if destination.Location != nil && destination.Location.Country != "" {
+		query += ", " + destination.Location.Country
+	}
+
+	return query
+}
+
+// ValidateLocationDistance checks if a geocoding result is within reasonable distance of destination
+func (s *LocationIQService) ValidateLocationDistance(location *LocationIQResponse, destLat, destLon float64) bool {
+	if location == nil {
+		return false
+	}
+
+	// Parse result coordinates
+	var resultLat, resultLon float64
+	if _, err := fmt.Sscanf(location.Lat, "%f", &resultLat); err != nil {
+		return false
+	}
+	if _, err := fmt.Sscanf(location.Lon, "%f", &resultLon); err != nil {
+		return false
+	}
+
+	// Calculate distance
+	distance := s.HaversineDistance(destLat, destLon, resultLat, resultLon)
+
+	// Threshold: 200km (same as Photon)
+	maxDistanceKm := 200.0
+
+	return distance <= maxDistanceKm
+}
+
+// HaversineDistance calculates the great-circle distance between two points (in kilometers)
+func (s *LocationIQService) HaversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusKm = 6371.0
+
+	// Convert to radians
+	lat1Rad := lat1 * math.Pi / 180
+	lon1Rad := lon1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+	lon2Rad := lon2 * math.Pi / 180
+
+	// Haversine formula
+	dLat := lat2Rad - lat1Rad
+	dLon := lon2Rad - lon1Rad
+
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dLon/2)*math.Sin(dLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusKm * c
 }

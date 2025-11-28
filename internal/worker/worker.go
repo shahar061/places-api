@@ -228,9 +228,9 @@ func (w *Worker) processPlanTripJob(msg *types.PlanTripMessage) error {
 		fmt.Printf("Error updating job progress: %v\n", err)
 	}
 
-	// Enrich activities with tiered geocoding services
+	// Enrich activities with tiered geocoding services (with destination context for better accuracy)
 	// Photon (free) → LocationIQ (free tier) → Save without coords
-	photonSuccess, locationiqSuccess, totalActivities := w.photonService.EnrichItineraryWithFallback(itinerary, w.locationiqService)
+	photonSuccess, locationiqSuccess, totalActivities := w.photonService.EnrichItineraryWithFallback(itinerary, w.locationiqService, trip)
 	totalEnriched := photonSuccess + locationiqSuccess
 
 	fmt.Printf("📍 Geocoding results:\n")
